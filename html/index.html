@@ -1,0 +1,1179 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>WLED Visualization Studio</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<div id="app">
+
+  <header>
+    <div class="brand">
+      <div class="dot" id="playDot"></div>
+      <h1>WLED Visualization Studio</h1>
+    </div>
+    <span>trace &middot; simulate &middot; export</span>
+    <div class="hspacer"></div>
+
+    <div class="header-group">
+      <button class="hbtn" id="btnUploadPhoto">Upload Photo</button>
+      <button class="hbtn" id="btnClearPhoto" style="display:none;">Remove Photo</button>
+      <input type="file" id="photoInput" accept="image/*" style="display:none;">
+    </div>
+
+    <div class="header-group" title="Fetches your device's real effect &amp; palette list. Works best when this file is opened directly in your browser rather than viewed inside a chat, since a secure (https) page may block requests to a local http:// device.">
+      <input type="text" id="controllerIp" placeholder="Controller IP" style="width:130px;background:var(--surface-raised);border:1px solid var(--border);color:var(--text-primary);padding:8px 9px;border-radius:8px;font-family:var(--font-mono);font-size:12px;">
+      <button class="hbtn" id="btnConnect">Connect</button>
+      <span id="connStatus" style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;">not connected</span>
+    </div>
+
+    <div class="brightness-control">
+      Master
+      <input type="range" id="masterBrightness" min="0" max="255" value="200">
+    </div>
+
+    <button class="hbtn" id="btnPlayPause">Pause</button>
+    <button class="hbtn" id="btnToggleLines" title="Show or hide the guide lines connecting each run's points">Hide Guides</button>
+
+    <div class="header-group">
+      <button class="hbtn" id="btnImport">Import</button>
+      <input type="file" id="importInput" accept="application/json" style="display:none;">
+      <button class="hbtn" id="btnSaveProject">Save Project</button>
+      <button class="hbtn primary" id="btnExport">Export WLED Config</button>
+    </div>
+  </header>
+
+  <main>
+    <aside class="runs-panel">
+      <div class="panel-title">Runs</div>
+      <button class="add-run-btn" id="btnAddRun">+ Add LED Run</button>
+      <div id="runsList"></div>
+    </aside>
+
+    <div class="canvas-wrap" id="canvasWrap">
+      <canvas id="stage"></canvas>
+      <div class="canvas-hint" id="canvasHint" style="display:none;"></div>
+      <div class="empty-state" id="emptyState">
+        <h2>Blank canvas</h2>
+        <p>Upload a reference photo of your install, or just start adding runs — you can design without a photo too.</p>
+      </div>
+    </div>
+
+    <aside class="inspector-panel" id="inspector">
+      <div class="inspector-empty">Select or add a run to edit its length, LED count, colors and effect.</div>
+    </aside>
+  </main>
+
+</div>
+
+<script src="palettes.js"></script>
+<script src="effects.js"></script>
+<script>
+(function(){
+  "use strict";
+
+  /* ============================ CONSTANTS ============================ */
+  const UNIT_TO_M = {in:0.0254, ft:0.3048, cm:0.01, m:1};
+  const UNIT_LABEL = {in:'in', ft:'ft', cm:'cm', m:'m'};
+
+  // Effect definitions live in effects.js.
+
+  // Palette definitions live in palettes.js.
+
+  /* ============================ STATE ============================ */
+  let runs = [];
+  let selectedRunId = null;
+  let runCounter = 0;
+  let mode = 'idle'; // idle | drawing
+  let draftPoints = [];
+  let draggingPointIndex = -1;
+  let mousePos = null; // {x,y} fraction, live cursor while drawing
+  let playing = true;
+  let animTime = 0;
+  let lastFrameMs = null;
+  let masterBrightness = 200;
+  let showGuideLines = true;
+
+  let photoImg = null;
+  let photoDataUrl = null;
+
+  let controllerIp = '';
+  let liveEffects = null;   // array of effect names from the live device, index = fx id
+  let livePalettes = null;  // array of palette names from the live device, index = pal id
+  let deviceInfo = null;
+  let inspectorTab = 'settings'; // 'settings' | 'device'
+
+  const canvas = document.getElementById('stage');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvasWrap');
+  const emptyState = document.getElementById('emptyState');
+  const canvasHint = document.getElementById('canvasHint');
+
+  /* ============================ UTIL ============================ */
+  function uid(){ runCounter++; return 'run_' + runCounter + '_' + Math.floor(Math.random()*1000); }
+
+  function hexToRgb(hex){
+    hex = (hex||'#000000').replace('#','');
+    if(hex.length===3) hex = hex.split('').map(c=>c+c).join('');
+    const n = parseInt(hex,16);
+    return [(n>>16)&255,(n>>8)&255,n&255];
+  }
+  function rgbToCss(rgb, alpha){
+    alpha = alpha===undefined?1:alpha;
+    const r = rgb[0]|0;
+    const g = rgb[1]|0;
+    const b = rgb[2]|0;
+    if(r===0 && g===0 && b===0){
+      return 'rgba(0,0,0,0)';
+    }
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  function lerp(a,b,t){ return a+(b-a)*t; }
+  function lerpRgb(c1,c2,t){
+    return [lerp(c1[0],c2[0],t), lerp(c1[1],c2[1],t), lerp(c1[2],c2[2],t)];
+  }
+  function clamp(v,min,max){ return Math.max(min,Math.min(max,v)); }
+  function hash01(x){ const s = Math.sin(x*12.9898)*43758.5453; return s - Math.floor(s); }
+  function hsl2rgb(h,s,l){
+    h = ((h%360)+360)%360;
+    s = clamp(s,0,1); l = clamp(l,0,1);
+    const c=(1-Math.abs(2*l-1))*s, x=c*(1-Math.abs((h/60)%2-1)), m=l-c/2;
+    let r=0,g=0,b=0;
+    if(h<60){r=c;g=x;b=0;} else if(h<120){r=x;g=c;b=0;} else if(h<180){r=0;g=c;b=x;}
+    else if(h<240){r=0;g=x;b=c;} else if(h<300){r=x;g=0;b=c;} else {r=c;g=0;b=x;}
+    return [(r+m)*255,(g+m)*255,(b+m)*255];
+  }
+  function download(filename, text){
+    const blob = new Blob([text], {type:'application/json'});
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url; a.download = filename;
+    document.body.appendChild(a); a.click(); a.remove();
+    URL.revokeObjectURL(url);
+  }
+
+  function lengthInMeters(run){
+    return (run.lengthValue || 0) * (UNIT_TO_M[run.lengthUnit] || 1);
+  }
+  function densityPerM(run){
+    const m = lengthInMeters(run);
+    if(m<=0) return 0;
+    return run.ledCount / m;
+  }
+
+  function defaultRun(){
+    const prev = runs[runs.length-1];
+    const startIndex = prev ? (prev.startIndex + prev.ledCount) : 0;
+    const palette = ['#5EEAD4','#FF6B6B','#FFC371','#A78BFA','#4FACFE','#FF9B54'];
+    const color1 = palette[runs.length % palette.length];
+    return {
+      id: uid(),
+      name: 'Run ' + (runs.length+1),
+      points: [],
+      ledCount: 30,
+      lengthValue: 5,
+      lengthUnit: 'ft',
+      startIndex: startIndex,
+      reverse: false,
+      effect: 'wled_28',
+      simKey: 'chase',      // which built-in simulation to render; separate from effect id so real/live effects can map to an approximate preview
+      effectLabel: 'Chase', // human-readable name, set whenever effect comes from the real or live-device fx list
+      paletteId: 0,
+      grouping: 1,
+      spacing: 0,
+      mirror: false,
+      speed: 140,
+      intensity: 128,
+      color1: color1,
+      color2: '#000000',
+      color3: '#FF00AA',
+      opacity: 1,
+      visible: true
+    };
+  }
+
+  // Maps a real WLED effect name (from a connected device) to the closest
+  // built-in simulation we know how to render. This is a heuristic preview
+  // only — the exported fx id is still the device's real, exact index.
+  function guessSimEffect(name){
+    const n = (name||'').toLowerCase();
+    if(/fire|flicker|flame/.test(n)) return 'fire';
+    if(/noise|plasma|lava/.test(n)) return 'noise';
+    if(/twinkle|glitter|star/.test(n)) return 'twinkle';
+    if(/sparkle/.test(n)) return 'sparkle';
+    if(/theater/.test(n)) return 'theaterChase';
+    if(/scan|cylon|bounc/.test(n)) return 'scan';
+    if(/rainbow.*cycle|cycle.*rainbow/.test(n)) return 'rainbowCycle';
+    if(/rainbow/.test(n)) return 'rainbow';
+    if(/colorloop|hue/.test(n)) return 'colorloop';
+    if(/wipe/.test(n)) return 'wipe';
+    if(/chase|comet|meteor|runn/.test(n)) return 'chase';
+    if(/breath/.test(n)) return 'breathe';
+    if(/blink|strobe/.test(n)) return 'blink';
+    if(/solid|static/.test(n)) return 'solid';
+    return 'chase';
+  }
+
+  // Given a raw <select id="f_effect"> value ('wled_N' or 'live_N'), returns
+  // the built-in simulation key to preview it with.
+  function resolveSimKeyFromValue(val){
+    if(val.startsWith('wled_')){
+      const fx = WLED_EFFECTS_BY_ID[parseInt(val.slice(5))];
+      return fx ? fx.sim : 'chase';
+    }
+    if(val.startsWith('live_')){
+      return guessSimEffect(liveEffects ? liveEffects[parseInt(val.slice(5))] : '');
+    }
+    return val;
+  }
+  // Given the same value, returns the human-readable effect name.
+  function resolveEffectLabel(val){
+    if(val.startsWith('wled_')){
+      const fx = WLED_EFFECTS_BY_ID[parseInt(val.slice(5))];
+      return fx ? fx.name : val;
+    }
+    if(val.startsWith('live_')){
+      return liveEffects ? liveEffects[parseInt(val.slice(5))] : val;
+    }
+    return val;
+  }
+  // Resolves an imported run's effect (exported as a name + wledEffectId) back
+  // into our internal representation, preferring the id match.
+  function resolveImportedEffect(r){
+    if(typeof r.wledEffectId==='number'){
+      const fx = WLED_EFFECTS_BY_ID[r.wledEffectId];
+      if(fx) return {effect:'wled_'+fx.id, effectLabel:fx.name, simKey:fx.sim};
+    }
+    if(r.effect){
+      const byName = WLED_EFFECTS_REAL.find(e=>e.name.toLowerCase()===String(r.effect).toLowerCase());
+      if(byName) return {effect:'wled_'+byName.id, effectLabel:byName.name, simKey:byName.sim};
+    }
+    if(EFFECT_MAP[r.effect]) return {effect:r.effect, effectLabel:null, simKey:r.effect};
+    return {effect:'wled_28', effectLabel:r.effect||'Chase', simKey:guessSimEffect(r.effect)};
+  }
+
+  /* ============================ EFFECT ENGINE ============================ */
+  // Returns [r,g,b] 0-255 for LED index i of n, at time t (seconds), for a run.
+  function effectColor(run, i, n, t){
+    return computeEffectColor(run, i, n, t, {
+      hexToRgb,
+      lerpRgb,
+      clamp,
+      hsl2rgb,
+      hash01,
+      sampleGradientStops,
+      getPaletteStops
+    });
+  }
+
+  // Interpolates a color from real, non-uniformly-spaced WLED gradient stops
+  // ([[position 0-1, hexColor], ...]) at a given position 0-1.
+  function sampleGradientStops(stops, pos){
+    pos = clamp(pos, 0, 1);
+    for(let k=0; k<stops.length-1; k++){
+      const [p0, c0] = stops[k], [p1, c1h] = stops[k+1];
+      if(pos>=p0 && pos<=p1){
+        const span = p1-p0;
+        const t = span>0.0001 ? (pos-p0)/span : 0;
+        return lerpRgb(hexToRgb(c0), hexToRgb(c1h), t);
+      }
+    }
+    return hexToRgb(stops[stops.length-1][1]);
+  }
+
+  // Returns real gradient stops ([[position, hexColor], ...]) for the run's
+  // selected palette, preferring the embedded real WLED palette data (extracted
+  // from palettes.cpp), falling back to a name-match against a connected live
+  // device's palette list. Returns null for content-driven palettes (Default,
+  // Color 1, etc.) or when no match is found.
+  function getPaletteStops(run){
+    if(run.paletteId===undefined || run.paletteId===null) return null;
+    const real = WLED_PALETTES_BY_ID[run.paletteId];
+    if(real && real.stops) return real.stops;
+    if(livePalettes && livePalettes[run.paletteId]){
+      const name = livePalettes[run.paletteId].toLowerCase();
+      const match = WLED_PALETTES_REAL.find(p=>p.name.toLowerCase().replace(/^\*\s*/,'')===name.replace(/^\*\s*/,''));
+      if(match && match.stops) return match.stops;
+    }
+    return null;
+  }
+
+  /* ============================ CANVAS SIZING ============================ */
+  function resizeCanvas(){
+    const rect = wrap.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = rect.width * dpr;
+    canvas.height = rect.height * dpr;
+    canvas.style.width = rect.width+'px';
+    canvas.style.height = rect.height+'px';
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+  }
+  new ResizeObserver(resizeCanvas).observe(wrap);
+
+  function getCanvasSize(){
+    const rect = wrap.getBoundingClientRect();
+    return {w:rect.width, h:rect.height};
+  }
+
+  function fracToPixel(pt){
+    const {w,h} = getCanvasSize();
+    return {x: pt.x*w, y: pt.y*h};
+  }
+  function pixelToFrac(x,y){
+    const {w,h} = getCanvasSize();
+    return {x: clamp(x/w,0,1), y: clamp(y/h,0,1)};
+  }
+
+  /* ============================ PATH MATH ============================ */
+  function pathLength(points){
+    let len=0;
+    for(let i=1;i<points.length;i++){
+      const a=points[i-1], b=points[i];
+      len += Math.hypot(b.x-a.x, b.y-a.y);
+    }
+    return len;
+  }
+  // Returns n evenly spaced points (fraction coords) along the polyline.
+  function samplePath(points, n){
+    if(points.length===0) return [];
+    if(points.length===1 || n<=1) return new Array(Math.max(n,1)).fill(points[0]);
+    const total = pathLength(points);
+    if(total===0) return new Array(n).fill(points[0]);
+    const segLens = [];
+    for(let i=1;i<points.length;i++){
+      segLens.push(Math.hypot(points[i].x-points[i-1].x, points[i].y-points[i-1].y));
+    }
+    const out = [];
+    for(let k=0;k<n;k++){
+      const target = n===1 ? 0 : (k/(n-1))*total;
+      let acc=0, segIdx=0;
+      while(segIdx < segLens.length-1 && acc+segLens[segIdx] < target){
+        acc += segLens[segIdx]; segIdx++;
+      }
+      const segLen = segLens[segIdx] || 0.0001;
+      const t = clamp((target-acc)/segLen, 0, 1);
+      const a = points[segIdx], b = points[segIdx+1];
+      out.push({x: lerp(a.x,b.x,t), y: lerp(a.y,b.y,t)});
+    }
+    return out;
+  }
+
+  /* ============================ RENDER ============================ */
+  function render(){
+    const {w,h} = getCanvasSize();
+    ctx.clearRect(0,0,w,h);
+
+    if(photoImg){
+      // contain-fit
+      const ir = photoImg.width/photoImg.height, cr = w/h;
+      let dw,dh,dx,dy;
+      if(ir > cr){ dw=w; dh=w/ir; dx=0; dy=(h-dh)/2; }
+      else { dh=h; dw=h*ir; dy=0; dx=(w-dw)/2; }
+      ctx.globalAlpha = 1;
+      ctx.drawImage(photoImg, dx,dy,dw,dh);
+      ctx.fillStyle = 'rgba(0,0,0,0.35)';
+      ctx.fillRect(0,0,w,h);
+    }
+
+    const masterB = masterBrightness/255;
+
+    runs.forEach(run=>{
+      if(!run.visible) return;
+      const isSelected = run.id===selectedRunId;
+      const pts = run.points;
+      if(pts.length < 2){
+        // still draw handle for single point if selected
+      } else {
+        // guide line
+        if(showGuideLines){
+          ctx.beginPath();
+          pts.forEach((p,idx)=>{
+            const px = fracToPixel(p);
+            if(idx===0) ctx.moveTo(px.x,px.y); else ctx.lineTo(px.x,px.y);
+          });
+          ctx.strokeStyle = isSelected ? 'rgba(94,234,212,0.35)' : 'rgba(255,255,255,0.12)';
+          ctx.lineWidth = isSelected ? 2 : 1;
+          ctx.stroke();
+        }
+
+        const n = Math.max(1, run.ledCount|0);
+        // Sample in pixel space (not fractional coords) so LED spacing reflects
+        // true physical distance regardless of canvas aspect ratio.
+        const ptsPixel = pts.map(fracToPixel);
+        const ledPts = samplePath(ptsPixel, n);
+        const order = run.reverse ? ledPts.slice().reverse() : ledPts;
+        const opacity = (run.opacity===undefined?1:run.opacity) * masterB;
+
+        // Grouping/spacing: every (grouping+spacing) physical LEDs, the first
+        // "grouping" of them share one effect step (lit as a block), and the
+        // following "spacing" of them stay dark — same as WLED segments.
+        const groupSize = Math.max(1, run.grouping||1);
+        const spacingSize = Math.max(0, run.spacing||0);
+        const cell = groupSize + spacingSize;
+        const totalGroups = Math.max(1, Math.ceil(n/cell));
+
+        order.forEach((p,i)=>{
+          const posInCell = i % cell;
+          const isLit = posInCell < groupSize;
+          const groupIndex = Math.floor(i/cell);
+          const px = p; // already in pixel space
+
+          if(!isLit){
+            ctx.beginPath();
+            ctx.fillStyle = `rgba(0,0,0,${(opacity*0).toFixed(3)})`;
+            ctx.arc(px.x, px.y, 2, 0, Math.PI*2);
+            ctx.fill();
+            return;
+          }
+
+          const rgb = effectColor(run, groupIndex, totalGroups, animTime);
+          const core = rgbToCss(rgb, opacity);
+          const halo = rgbToCss(rgb, opacity*0.28);
+          ctx.beginPath();
+          ctx.fillStyle = halo;
+          ctx.arc(px.x, px.y, 6.5, 0, Math.PI*2);
+          ctx.fill();
+          ctx.beginPath();
+          ctx.fillStyle = core;
+          ctx.arc(px.x, px.y, 3, 0, Math.PI*2);
+          ctx.fill();
+        });
+      }
+
+      // handles when selected & not drawing
+      if(isSelected && mode==='idle' && showGuideLines){
+        pts.forEach((p)=>{
+          const px = fracToPixel(p);
+          ctx.beginPath();
+          ctx.arc(px.x, px.y, 6, 0, Math.PI*2);
+          ctx.fillStyle = '#0A0C10';
+          ctx.fill();
+          ctx.lineWidth = 2;
+          ctx.strokeStyle = '#5EEAD4';
+          ctx.stroke();
+        });
+      }
+    });
+
+    // active drafting path
+    if(mode==='drawing' && showGuideLines){
+      ctx.beginPath();
+      draftPoints.forEach((p,idx)=>{
+        const px = fracToPixel(p);
+        if(idx===0) ctx.moveTo(px.x,px.y); else ctx.lineTo(px.x,px.y);
+      });
+      if(mousePos && draftPoints.length>0){
+        const px = fracToPixel(mousePos);
+        ctx.lineTo(px.x, px.y);
+      }
+      ctx.strokeStyle = '#5EEAD4';
+      ctx.lineWidth = 2;
+      ctx.setLineDash([5,4]);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      draftPoints.forEach((p,idx)=>{
+        const px = fracToPixel(p);
+        ctx.beginPath();
+        ctx.arc(px.x, px.y, idx===0?7:5, 0, Math.PI*2);
+        ctx.fillStyle = idx===0 ? '#FF9B54' : '#5EEAD4';
+        ctx.fill();
+      });
+    }
+
+    updateEmptyState();
+  }
+
+  function updateEmptyState(){
+    const hasContent = photoImg || runs.length>0 || mode==='drawing';
+    emptyState.style.display = hasContent ? 'none' : 'flex';
+  }
+
+  /* ============================ ANIMATION LOOP ============================ */
+  function frame(ms){
+    if(lastFrameMs==null) lastFrameMs = ms;
+    const dt = (ms-lastFrameMs)/1000;
+    lastFrameMs = ms;
+    if(playing) animTime += dt;
+    render();
+    requestAnimationFrame(frame);
+  }
+  requestAnimationFrame(frame);
+
+  /* ============================ CANVAS INTERACTION ============================ */
+  const HANDLE_HIT_PX = 12;
+
+  function eventToFrac(e){
+    const rect = canvas.getBoundingClientRect();
+    return pixelToFrac(e.clientX-rect.left, e.clientY-rect.top);
+  }
+  function eventToPixel(e){
+    const rect = canvas.getBoundingClientRect();
+    return {x:e.clientX-rect.left, y:e.clientY-rect.top};
+  }
+
+  canvas.addEventListener('mousemove', (e)=>{
+    const pxPos = eventToPixel(e);
+    if(mode==='drawing'){
+      mousePos = eventToFrac(e);
+    }
+    if(draggingPointIndex>=0){
+      const run = runs.find(r=>r.id===selectedRunId);
+      if(run){
+        run.points[draggingPointIndex] = eventToFrac(e);
+      }
+    } else if(mode==='idle' && selectedRunId){
+      const run = runs.find(r=>r.id===selectedRunId);
+      if(run){
+        canvas.style.cursor = 'default';
+        for(const p of run.points){
+          const hp = fracToPixel(p);
+          if(Math.hypot(hp.x-pxPos.x, hp.y-pxPos.y) < HANDLE_HIT_PX){
+            canvas.style.cursor='grab'; break;
+          }
+        }
+      }
+    }
+  });
+
+  canvas.addEventListener('mousedown', (e)=>{
+    if(mode!=='idle' || !selectedRunId) return;
+    const run = runs.find(r=>r.id===selectedRunId);
+    if(!run) return;
+    const pxPos = eventToPixel(e);
+    for(let idx=0; idx<run.points.length; idx++){
+      const hp = fracToPixel(run.points[idx]);
+      if(Math.hypot(hp.x-pxPos.x, hp.y-pxPos.y) < HANDLE_HIT_PX){
+        draggingPointIndex = idx;
+        canvas.style.cursor='grabbing';
+        break;
+      }
+    }
+  });
+  window.addEventListener('mouseup', ()=>{
+    if(draggingPointIndex>=0){ draggingPointIndex=-1; canvas.style.cursor='default'; }
+  });
+
+  canvas.addEventListener('click', (e)=>{
+    if(mode!=='drawing') return;
+    const p = eventToFrac(e);
+    draftPoints.push(p);
+    updateCanvasHint();
+  });
+
+  canvas.addEventListener('dblclick', (e)=>{
+    if(mode==='drawing') finishDrawing();
+  });
+
+  canvas.addEventListener('contextmenu', (e)=>{
+    e.preventDefault();
+    if(mode==='idle' && selectedRunId){
+      const run = runs.find(r=>r.id===selectedRunId);
+      if(run && run.points.length>2){
+        const pxPos = eventToPixel(e);
+        for(let idx=0; idx<run.points.length; idx++){
+          const hp = fracToPixel(run.points[idx]);
+          if(Math.hypot(hp.x-pxPos.x, hp.y-pxPos.y) < HANDLE_HIT_PX){
+            run.points.splice(idx,1);
+            break;
+          }
+        }
+      }
+    } else if(mode==='drawing' && draftPoints.length>0){
+      draftPoints.pop();
+      updateCanvasHint();
+    }
+  });
+
+  window.addEventListener('keydown', (e)=>{
+    if(mode==='drawing'){
+      if(e.key==='Enter') finishDrawing();
+      if(e.key==='Escape') cancelDrawing();
+      if(e.key==='Backspace'){ draftPoints.pop(); updateCanvasHint(); }
+    }
+  });
+
+  function updateCanvasHint(){
+    if(mode==='drawing'){
+      canvasHint.style.display='flex';
+      canvasHint.classList.add('drawing');
+      canvasHint.textContent = `Click to add points (${draftPoints.length}) · double-click or Enter to finish · Esc to cancel`;
+    } else {
+      canvasHint.style.display='none';
+      canvasHint.classList.remove('drawing');
+    }
+  }
+
+  function startDrawing(run){
+    showGuideLines = true;
+    const toggleBtn = document.getElementById('btnToggleLines');
+    if(toggleBtn) toggleBtn.textContent = 'Hide Guides';
+    mode='drawing';
+    draftPoints = [];
+    selectedRunId = run.id;
+    updateCanvasHint();
+    renderRunsList();
+    renderInspector();
+  }
+  function finishDrawing(){
+    const run = runs.find(r=>r.id===selectedRunId);
+    if(run && draftPoints.length>=2){
+      run.points = draftPoints.slice();
+    } else if(run && draftPoints.length<2){
+      // not enough points, drop the run
+      runs = runs.filter(r=>r.id!==run.id);
+      selectedRunId = null;
+    }
+    mode='idle'; draftPoints=[]; mousePos=null;
+    updateCanvasHint();
+    renderRunsList();
+    renderInspector();
+  }
+  function cancelDrawing(){
+    const run = runs.find(r=>r.id===selectedRunId);
+    if(run && run.points.length===0){
+      runs = runs.filter(r=>r.id!==run.id);
+      selectedRunId = runs.length ? runs[runs.length-1].id : null;
+    }
+    mode='idle'; draftPoints=[]; mousePos=null;
+    updateCanvasHint();
+    renderRunsList();
+    renderInspector();
+  }
+
+  /* ============================ RUNS LIST UI ============================ */
+  function svgIcon(name){
+    const icons = {
+      eye: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-7 11-7 11 7 11 7-4 7-11 7-11-7-11-7z"/><circle cx="12" cy="12" r="3"/></svg>',
+      eyeOff: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M17.94 17.94A10.94 10.94 0 0112 19c-7 0-11-7-11-7a21.6 21.6 0 015.06-6.06M9.9 4.24A10.94 10.94 0 0112 4c7 0 11 7 11 7a21.6 21.6 0 01-2.16 3.19M14.12 14.12a3 3 0 11-4.24-4.24"/><line x1="1" y1="1" x2="23" y2="23"/></svg>',
+      trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m3 0V4a2 2 0 012-2h4a2 2 0 012 2v2"/></svg>',
+      up: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="18 15 12 9 6 15"/></svg>',
+      down: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>',
+      pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 013 3L7 19l-4 1 1-4z"/></svg>'
+    };
+    return icons[name]||'';
+  }
+
+  function renderRunsList(){
+    const listEl = document.getElementById('runsList');
+    const addBtn = document.getElementById('btnAddRun');
+    addBtn.disabled = mode==='drawing';
+
+    if(runs.length===0){
+      listEl.innerHTML = '<div class="empty-hint">No runs yet. Click "Add LED Run", then click points on the canvas to trace a strip — start to end.</div>';
+      return;
+    }
+    listEl.innerHTML = '';
+    runs.forEach((run, idx)=>{
+      const card = document.createElement('div');
+      card.className = 'run-card' + (run.id===selectedRunId ? ' selected':'');
+      card.innerHTML = `
+        <div class="row1">
+          <div class="swatch" style="background:${run.color1}"></div>
+          <div class="run-name">${run.name}</div>
+          <button class="icon-btn" data-act="vis" title="Toggle visibility">${svgIcon(run.visible?'eye':'eyeOff')}</button>
+        </div>
+        <div class="run-meta">
+          <span>${run.ledCount} LEDs</span>
+          <span>${run.lengthValue}${UNIT_LABEL[run.lengthUnit]}</span>
+          <span>${run.effectLabel || (EFFECT_MAP[run.effect] ? EFFECT_MAP[run.effect].label : run.effect)}</span>
+        </div>
+        <div class="row2">
+          <button class="icon-btn" data-act="up" title="Move up">${svgIcon('up')}</button>
+          <button class="icon-btn" data-act="down" title="Move down">${svgIcon('down')}</button>
+          <button class="icon-btn" data-act="redraw" title="Redraw path">${svgIcon('pencil')}</button>
+          <button class="icon-btn" data-act="del" title="Delete run">${svgIcon('trash')}</button>
+        </div>
+      `;
+      card.addEventListener('click', (e)=>{
+        const act = e.target.closest('[data-act]');
+        if(!act){
+          if(mode==='idle'){ selectedRunId = run.id; renderRunsList(); renderInspector(); }
+          return;
+        }
+        e.stopPropagation();
+        const a = act.getAttribute('data-act');
+        if(a==='vis'){ run.visible=!run.visible; renderRunsList(); }
+        else if(a==='del'){
+          runs = runs.filter(r=>r.id!==run.id);
+          if(selectedRunId===run.id) selectedRunId = null;
+          renderRunsList(); renderInspector();
+        }
+        else if(a==='up' && idx>0){ [runs[idx-1],runs[idx]]=[runs[idx],runs[idx-1]]; renderRunsList(); }
+        else if(a==='down' && idx<runs.length-1){ [runs[idx+1],runs[idx]]=[runs[idx],runs[idx+1]]; renderRunsList(); }
+        else if(a==='redraw'){ selectedRunId=run.id; startDrawing(run); }
+      });
+      listEl.appendChild(card);
+    });
+  }
+
+  document.getElementById('btnAddRun').addEventListener('click', ()=>{
+    if(mode==='drawing') return;
+    const run = defaultRun();
+    runs.push(run);
+    startDrawing(run);
+  });
+
+  /* ============================ INSPECTOR UI ============================ */
+  function renderInspector(){
+    const el = document.getElementById('inspector');
+
+    el.innerHTML = `
+      <div class="tab-bar">
+        <button class="tab-btn ${inspectorTab==='settings'?'active':''}" id="tabSettings">Run Settings</button>
+        <button class="tab-btn ${inspectorTab==='device'?'active':''}" id="tabDevice" ${controllerIp?'':'disabled'} title="${controllerIp?'':'Connect to a controller first'}">Device UI</button>
+      </div>
+      <div id="inspectorBody"></div>
+    `;
+    document.getElementById('tabSettings').addEventListener('click', ()=>{ inspectorTab='settings'; renderInspector(); });
+    const tabDeviceBtn = document.getElementById('tabDevice');
+    if(controllerIp) tabDeviceBtn.addEventListener('click', ()=>{ inspectorTab='device'; renderInspector(); });
+
+    const body = document.getElementById('inspectorBody');
+
+    if(inspectorTab==='device'){
+      renderDeviceTab(body);
+      return;
+    }
+    renderRunSettingsTab(body);
+  }
+
+  function renderDeviceTab(body){
+    if(!controllerIp){
+      body.innerHTML = '<div class="inspector-empty">Connect to a controller in the header first.</div>';
+      return;
+    }
+    body.innerHTML = `
+      <div class="hint" style="line-height:1.6;margin:0 2px 10px;">
+        ${controllerIp}'s own web interface, loaded directly. Changes made here control the real lights immediately and are separate from your saved layout.
+        <br><a href="http://${controllerIp}/" target="_blank" style="color:var(--accent);">Open in a new tab instead &rarr;</a>
+      </div>
+      <iframe id="deviceFrame" src="http://${controllerIp}/" title="WLED device interface"
+        style="width:100%;height:60vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>
+      <div class="hint" style="margin-top:8px;">If this stays blank: a secure (https) page is likely blocking a plain http:// device (mixed content). Use "open in a new tab", or download this file and open it directly in your browser.</div>
+    `;
+  }
+
+  function renderRunSettingsTab(el){
+    const run = runs.find(r=>r.id===selectedRunId);
+
+    if(mode==='drawing'){
+      el.innerHTML = `<div class="inspector-empty">Drawing path for <strong style="color:var(--text-primary)">${run?run.name:''}</strong>.<br><br>Click points along the strip's physical route. Double-click, press Enter, or use the canvas hint to finish.</div>`;
+      return;
+    }
+
+    if(!run){
+      el.innerHTML = '<div class="inspector-empty">Select or add a run to edit its length, LED count, colors and effect.</div>';
+      return;
+    }
+
+    const density = densityPerM(run).toFixed(1);
+    const effectDef = EFFECT_MAP[run.simKey || run.effect] || EFFECT_MAP.chase;
+    const showParam = (p)=> effectDef.params.includes(p);
+
+    el.innerHTML = `
+      <div class="field">
+        <label>Name</label>
+        <input type="text" id="f_name" value="${run.name.replace(/"/g,'&quot;')}">
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Length</label>
+          <input type="number" id="f_length" min="0" step="0.1" value="${run.lengthValue}">
+        </div>
+        <div class="field" style="max-width:80px;">
+          <label>Unit</label>
+          <select id="f_unit">
+            ${Object.keys(UNIT_TO_M).map(u=>`<option value="${u}" ${u===run.lengthUnit?'selected':''}>${u}</option>`).join('')}
+          </select>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>LED Count</label>
+        <input type="number" id="f_ledcount" min="1" step="1" value="${run.ledCount}">
+        <div class="hint">${density} LEDs/m at this length</div>
+      </div>
+
+      <div class="row">
+        <div class="field">
+          <label>Controller Start Index</label>
+          <input type="number" id="f_start" min="0" step="1" value="${run.startIndex}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-row" style="text-transform:none;font-weight:500;letter-spacing:0;">
+          <input type="checkbox" id="f_reverse" ${run.reverse?'checked':''}> Reverse direction
+        </label>
+      </div>
+
+      <div class="field">
+        <label>Effect ${liveEffects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live from '+controllerIp+'</span>' : '<span style="color:var(--text-faint);text-transform:none;letter-spacing:0;">&middot; WLED effect library</span>'}</label>
+        <select id="f_effect">
+          ${ liveEffects
+              ? liveEffects.map((name,idx)=>`<option value="live_${idx}" ${run.effect==='live_'+idx?'selected':''}>${name}</option>`).join('')
+              : WLED_EFFECTS_REAL.map(fx=>`<option value="wled_${fx.id}" title="${fx.desc.replace(/"/g,'&quot;')}" ${run.effect==='wled_'+fx.id?'selected':''}>${fx.name}</option>`).join('')
+          }
+        </select>
+        <div class="hint">${liveEffects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} Canvas preview approximates the look.</div>
+      </div>
+
+      <div class="field">
+        <label>Palette ${liveEffects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live</span>' : ''}</label>
+        <select id="f_palette">
+          ${ (liveEffects && livePalettes)
+              ? livePalettes.map((name,idx)=>`<option value="${idx}" ${run.paletteId===idx?'selected':''}>${name}</option>`).join('')
+              : WLED_PALETTES_REAL.map(p=>`<option value="${p.id}" title="${p.desc.replace(/"/g,'&quot;')}" ${run.paletteId===p.id?'selected':''}>${p.name}</option>`).join('')
+          }
+        </select>
+      </div>
+
+      <div class="color-row">
+        <div class="color-field" style="${showParam('color')?'':'display:none;'}">
+          <label>Color 1</label>
+          <input type="color" id="f_color1" value="${run.color1}">
+        </div>
+        <div class="color-field" style="${showParam('color2')?'':'display:none;'}">
+          <label>Color 2</label>
+          <input type="color" id="f_color2" value="${run.color2}">
+        </div>
+        <div class="color-field" style="${showParam('color3')?'':'display:none;'}">
+          <label>Color 3</label>
+          <input type="color" id="f_color3" value="${run.color3}">
+        </div>
+      </div>
+
+      <div class="field" style="${showParam('speed')?'':'display:none;'}">
+        <label>Speed</label>
+        <div class="slider-row">
+          <input type="range" id="f_speed" min="0" max="255" value="${run.speed}">
+          <span>${run.speed}</span>
+        </div>
+      </div>
+
+      <div class="field" style="${showParam('intensity')?'':'display:none;'}">
+        <label>Intensity</label>
+        <div class="slider-row">
+          <input type="range" id="f_intensity" min="0" max="255" value="${run.intensity}">
+          <span>${run.intensity}</span>
+        </div>
+      </div>
+
+      <div class="field">
+        <label>Segment Brightness</label>
+        <div class="slider-row">
+          <input type="range" id="f_opacity" min="0" max="255" value="${Math.round(run.opacity*255)}">
+          <span>${Math.round(run.opacity*255)}</span>
+        </div>
+      </div>
+
+      <div class="panel-title" style="margin-top:6px;">Segment Options</div>
+
+      <div class="row">
+        <div class="field">
+          <label>Grouping</label>
+          <input type="number" id="f_grouping" min="1" step="1" value="${run.grouping||1}">
+        </div>
+        <div class="field">
+          <label>Spacing</label>
+          <input type="number" id="f_spacing" min="0" step="1" value="${run.spacing||0}">
+        </div>
+      </div>
+
+      <div class="field">
+        <label class="checkbox-row" style="text-transform:none;font-weight:500;letter-spacing:0;">
+          <input type="checkbox" id="f_mirror" ${run.mirror?'checked':''}> Mirror segment
+        </label>
+      </div>
+
+      <button class="hbtn primary" id="f_update" style="width:100%;justify-content:center;margin-top:4px;">Update Run</button>
+      <div class="hint" style="text-align:center;margin-top:6px;">Press Enter in a field, or click Update, to apply changes</div>
+
+      <button class="delete-run-btn" id="f_delete">Delete Run</button>
+    `;
+
+    // Effect selection applies immediately (not deferred), since a select
+    // doesn't have the typing-jitter problem number/text fields have.
+    document.getElementById('f_effect').addEventListener('change', ()=>{
+      const val = document.getElementById('f_effect').value;
+      run.effect = val;
+      run.effectLabel = resolveEffectLabel(val);
+      run.simKey = resolveSimKeyFromValue(val);
+      renderInspector();
+      renderRunsList();
+    });
+
+    // Palette selection applies immediately.
+    const paletteSel = document.getElementById('f_palette');
+    if(paletteSel) paletteSel.addEventListener('change', ()=>{
+      run.paletteId = parseInt(paletteSel.value);
+    });
+
+    // Color pickers apply immediately (live, while dragging).
+    const c1f = document.getElementById('f_color1'); if(c1f) c1f.addEventListener('input', ()=>{ run.color1 = c1f.value; renderRunsList(); });
+    const c2f = document.getElementById('f_color2'); if(c2f) c2f.addEventListener('input', ()=>{ run.color2 = c2f.value; });
+    const c3f = document.getElementById('f_color3'); if(c3f) c3f.addEventListener('input', ()=>{ run.color3 = c3f.value; });
+
+    // Slider labels update live, but the value itself isn't applied to the
+    // run (and canvas) until Update / Enter.
+    const sp = document.getElementById('f_speed'); if(sp) sp.addEventListener('input', ()=>{ sp.nextElementSibling.textContent = sp.value; });
+    const it = document.getElementById('f_intensity'); if(it) it.addEventListener('input', ()=>{ it.nextElementSibling.textContent = it.value; });
+    const op = document.getElementById('f_opacity'); op.addEventListener('input', ()=>{ op.nextElementSibling.textContent = op.value; });
+
+    // Enter commits changes from any text/number field.
+    el.querySelectorAll('input[type=text], input[type=number]').forEach(inp=>{
+      inp.addEventListener('keydown', e=>{
+        if(e.key==='Enter'){ e.preventDefault(); applyRunSettings(run); }
+      });
+    });
+
+    document.getElementById('f_update').addEventListener('click', ()=>applyRunSettings(run));
+    document.getElementById('f_delete').addEventListener('click', ()=>{
+      runs = runs.filter(r=>r.id!==run.id);
+      selectedRunId = null;
+      renderRunsList(); renderInspector();
+    });
+  }
+
+  function applyRunSettings(run){
+    run.name = document.getElementById('f_name').value.trim() || run.name;
+    run.lengthValue = parseFloat(document.getElementById('f_length').value) || 0;
+    run.lengthUnit = document.getElementById('f_unit').value;
+    run.ledCount = Math.max(1, parseInt(document.getElementById('f_ledcount').value) || 1);
+    run.startIndex = Math.max(0, parseInt(document.getElementById('f_start').value) || 0);
+    run.reverse = document.getElementById('f_reverse').checked;
+
+    const effVal = document.getElementById('f_effect').value;
+    run.effect = effVal;
+    run.effectLabel = resolveEffectLabel(effVal);
+    run.simKey = resolveSimKeyFromValue(effVal);
+
+    const palSel = document.getElementById('f_palette'); if(palSel) run.paletteId = parseInt(palSel.value);
+    run.grouping = Math.max(1, parseInt(document.getElementById('f_grouping').value) || 1);
+    run.spacing = Math.max(0, parseInt(document.getElementById('f_spacing').value) || 0);
+    run.mirror = document.getElementById('f_mirror').checked;
+
+    const c1 = document.getElementById('f_color1'); if(c1) run.color1 = c1.value;
+    const c2 = document.getElementById('f_color2'); if(c2) run.color2 = c2.value;
+    const c3 = document.getElementById('f_color3'); if(c3) run.color3 = c3.value;
+    const sp = document.getElementById('f_speed'); if(sp) run.speed = parseInt(sp.value);
+    const it = document.getElementById('f_intensity'); if(it) run.intensity = parseInt(it.value);
+    run.opacity = parseInt(document.getElementById('f_opacity').value) / 255;
+
+    renderInspector();
+    renderRunsList();
+  }
+
+  /* ============================ HEADER CONTROLS ============================ */
+  document.getElementById('btnUploadPhoto').addEventListener('click', ()=>document.getElementById('photoInput').click());
+  document.getElementById('photoInput').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      photoDataUrl = ev.target.result;
+      const img = new Image();
+      img.onload = ()=>{ photoImg = img; document.getElementById('btnClearPhoto').style.display='inline-flex'; };
+      img.src = photoDataUrl;
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById('btnClearPhoto').addEventListener('click', ()=>{
+    photoImg=null; photoDataUrl=null;
+    document.getElementById('btnClearPhoto').style.display='none';
+    document.getElementById('photoInput').value='';
+  });
+
+  function setConnStatus(text, state){
+    const el = document.getElementById('connStatus');
+    el.textContent = text;
+    el.style.color = state==='connected' ? 'var(--accent)' : state==='error' ? 'var(--danger)' : 'var(--text-faint)';
+  }
+
+  async function connectController(){
+    const ip = document.getElementById('controllerIp').value.trim();
+    if(!ip){ setConnStatus('enter an ip first','error'); return; }
+    controllerIp = ip;
+    setConnStatus('connecting…','connecting');
+    try{
+      const base = 'http://' + ip;
+      const [effRes, palRes] = await Promise.all([
+        fetch(base + '/json/eff'),
+        fetch(base + '/json/pal')
+      ]);
+      if(!effRes.ok || !palRes.ok) throw new Error('bad response');
+      liveEffects = await effRes.json();
+      livePalettes = await palRes.json();
+      try{
+        const infoRes = await fetch(base + '/json/info');
+        deviceInfo = infoRes.ok ? await infoRes.json() : null;
+      }catch(e){ deviceInfo = null; }
+      const label = (deviceInfo && deviceInfo.name) ? `${deviceInfo.name} · ${liveEffects.length} fx` : `connected · ${liveEffects.length} fx`;
+      setConnStatus(label, 'connected');
+      renderInspector();
+    }catch(err){
+      liveEffects = null; livePalettes = null;
+      setConnStatus('failed — check IP, or open this file directly in your browser', 'error');
+      renderInspector();
+    }
+  }
+  document.getElementById('btnConnect').addEventListener('click', connectController);
+
+  document.getElementById('masterBrightness').addEventListener('input', e=>{ masterBrightness=parseInt(e.target.value); });
+
+  const playDot = document.getElementById('playDot');
+  document.getElementById('btnPlayPause').addEventListener('click', (e)=>{
+    playing = !playing;
+    e.target.textContent = playing ? 'Pause' : 'Play';
+    playDot.style.opacity = playing ? '1' : '0.3';
+    lastFrameMs = null;
+  });
+
+  document.getElementById('btnToggleLines').addEventListener('click', (e)=>{
+    showGuideLines = !showGuideLines;
+    e.target.textContent = showGuideLines ? 'Hide Guides' : 'Show Guides';
+  });
+
+  /* ============================ EXPORT / IMPORT ============================ */
+  function resolveWledFxId(run){
+    if(run.effect.startsWith('wled_')) return parseInt(run.effect.slice(5));
+    if(run.effect.startsWith('live_')) return parseInt(run.effect.slice(5));
+    return WLED_FX_ID[run.effect] !== undefined ? WLED_FX_ID[run.effect] : null;
+  }
+
+  function buildExport(includePhoto){
+    const payload = {
+      meta: {
+        app: 'WLED Visualization Studio',
+        exportedAt: new Date().toISOString(),
+        connectedController: liveEffects ? controllerIp : null,
+        note: liveEffects
+          ? "Effect/palette ids for runs using a live effect were read directly from your controller's own /json/eff & /json/pal lists and should be exact for that device. Other runs use this app's embedded real WLED effect/palette reference (core set, ids 0-117 effects / 0-71 palettes), sourced from WLED's own documentation — accurate for standard firmware, but confirm against GET /json/eff if you're on a heavily customized build."
+          : "Effect/palette ids are drawn from this app's embedded real WLED reference (core set, ids 0-117 effects / 0-71 palettes), sourced from WLED's own documentation. Accurate for standard firmware. Connect to your controller in the header for an exact match to your specific build, especially for newer 2D/audio-reactive effects beyond id 117."
+      },
+      masterBrightness: masterBrightness,
+      canvas: getCanvasSize(),
+      photo: includePhoto ? photoDataUrl : null,
+      runs: runs.map(r=>({
+        id: r.id,
+        name: r.name,
+        points: r.points,
+        lengthValue: r.lengthValue,
+        lengthUnit: r.lengthUnit,
+        lengthMeters: +lengthInMeters(r).toFixed(4),
+        ledCount: r.ledCount,
+        densityPerMeter: +densityPerM(r).toFixed(2),
+        startIndex: r.startIndex,
+        reverse: r.reverse,
+        visible: r.visible,
+        effect: r.effectLabel || r.effect,
+        wledEffectId: resolveWledFxId(r),
+        paletteId: r.paletteId,
+        paletteName: (livePalettes && livePalettes[r.paletteId]) || (WLED_PALETTES_BY_ID[r.paletteId] ? WLED_PALETTES_BY_ID[r.paletteId].name : null),
+        grouping: r.grouping,
+        spacing: r.spacing,
+        mirror: r.mirror,
+        speed: r.speed,
+        intensity: r.intensity,
+        colors: [r.color1, r.color2, r.color3],
+        opacity: r.opacity
+      })),
+      wledSegments: runs.map((r,idx)=>({
+        id: idx,
+        start: r.startIndex,
+        stop: r.startIndex + r.ledCount,
+        len: r.ledCount,
+        grp: r.grouping,
+        spc: r.spacing,
+        mi: r.mirror,
+        col: [hexToRgb(r.color1), hexToRgb(r.color2), hexToRgb(r.color3)],
+        fx: resolveWledFxId(r),
+        pal: r.paletteId,
+        sx: r.speed,
+        ix: r.intensity,
+        rev: r.reverse,
+        on: r.visible,
+        bri: Math.round(r.opacity*255)
+      }))
+    };
+    return payload;
+  }
+
+  document.getElementById('btnExport').addEventListener('click', ()=>{
+    const payload = buildExport(false);
+    download('wled-config.json', JSON.stringify(payload, null, 2));
+  });
+  document.getElementById('btnSaveProject').addEventListener('click', ()=>{
+    const payload = buildExport(true);
+    download('wled-layout-project.json', JSON.stringify(payload, null, 2));
+  });
+
+  document.getElementById('btnImport').addEventListener('click', ()=>document.getElementById('importInput').click());
+  document.getElementById('importInput').addEventListener('change', (e)=>{
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev)=>{
+      try{
+        const data = JSON.parse(ev.target.result);
+        runs = (data.runs||[]).map(r=>{
+          const resolved = resolveImportedEffect(r);
+          return {
+            id: uid(),
+            name: r.name || 'Run',
+            points: r.points || [],
+            ledCount: r.ledCount || 30,
+            lengthValue: r.lengthValue || 1,
+            lengthUnit: r.lengthUnit || 'ft',
+            startIndex: r.startIndex || 0,
+            reverse: !!r.reverse,
+            effect: resolved.effect,
+            effectLabel: resolved.effectLabel,
+            simKey: resolved.simKey,
+            paletteId: r.paletteId!==undefined?r.paletteId:0,
+            grouping: r.grouping||1,
+            spacing: r.spacing||0,
+            mirror: !!r.mirror,
+            speed: r.speed!==undefined?r.speed:140,
+            intensity: r.intensity!==undefined?r.intensity:128,
+            color1: (r.colors&&r.colors[0])||'#5EEAD4',
+            color2: (r.colors&&r.colors[1])||'#000000',
+            color3: (r.colors&&r.colors[2])||'#FF00AA',
+            opacity: r.opacity!==undefined?r.opacity:1,
+            visible: r.visible!==false
+          };
+        });
+        selectedRunId = runs.length ? runs[0].id : null;
+        masterBrightness = data.masterBrightness!==undefined?data.masterBrightness:200;
+        document.getElementById('masterBrightness').value = masterBrightness;
+        if(data.photo){
+          photoDataUrl = data.photo;
+          const img = new Image();
+          img.onload = ()=>{ photoImg=img; document.getElementById('btnClearPhoto').style.display='inline-flex'; };
+          img.src = photoDataUrl;
+        }
+        renderRunsList(); renderInspector();
+      }catch(err){
+        alert('Could not read this file as a WLED Layout Studio project JSON.');
+      }
+    };
+    reader.readAsDataURL ? null : null;
+    reader.readAsText(file);
+  });
+
+  /* ============================ INIT ============================ */
+  resizeCanvas();
+  renderRunsList();
+  renderInspector();
+  updateCanvasHint();
+
+})();
+</script>
+</body>
+</html>
