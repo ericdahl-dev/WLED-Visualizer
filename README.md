@@ -23,7 +23,7 @@ A browser based [WLED](https://github.com/wled/WLED) simulator for mapping displ
 
 ## User interface
 
-<img src="/images/interface_001.jpg" width="50%">
+![Interface](images/interface_01.jpg)
 
 ## Installation
 
