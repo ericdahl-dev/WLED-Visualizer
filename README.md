@@ -18,7 +18,7 @@ A browser based [WLED](https://github.com/wled/WLED) simulator for mapping displ
 - Run length/count definition
 - Photo reference import
 - Project import/export
-- 118 WLED effects selectable by their real name and id, with 15 built-in simulations approximating them when you're working offline
+- 118 WLED effects selectable by their real name and id, with 24 built-in simulations approximating them when you're working offline
 - 72 pre-defined color palettes scraped from palettes.cpp
 - Connect to a live controller and read its effect list, palettes and device info
 - **Live Mirror** — show exactly what the controller is doing, LED for LED
@@ -72,7 +72,7 @@ A lot, actually. There's a lot I'd like to do here, but my JS skills aren't supe
 
 - **Multiple controller support.** One `controllerIp` today, so a project can only describe one ESP32.
 - **Import a project from a connected controller.** Connect and export work; import only updates existing runs, so an already-built display has to be recreated by hand.
-- **More simulated effects.** 118 effects are selectable by real name and id, but there are ~15 simulation renderers behind them, so most preview as an approximation of something else. Only matters offline — a connected controller is exact via Live Mirror.
+- **More simulated effects.** 118 effects are selectable by real name and id, with 24 simulation renderers behind them, so some still preview as an approximation of something else. Only matters offline — a connected controller is exact via Live Mirror.
 - **Segmentation.** One run maps to one segment; WLED allows several segments per strip.
 - **2D matrix support.** Runs are 1D paths, and a lot of modern WLED effects are 2D-native.
 - **Effect layering and blending.** Runs render independently and can't overlap.

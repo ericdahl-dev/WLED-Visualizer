@@ -14,6 +14,15 @@ const EFFECTS = [
   {id:'sparkle',       label:'Sparkle',          params:['speed','intensity','color','color2']},
   {id:'fire',          label:'Fire Flicker',     params:['speed','intensity','color','color2']},
   {id:'noise',         label:'Noise',            params:['speed','color','color2','color3']},
+  {id:'meteor',        label:'Meteor',           params:['speed','intensity','color','color2']},
+  {id:'sinelon',       label:'Sinelon',          params:['speed','intensity','color','color2']},
+  {id:'police',        label:'Police',           params:['speed','intensity']},
+  {id:'rain',          label:'Rain / Drip',      params:['speed','intensity','color','color2']},
+  {id:'twoDots',       label:'Two Dots',         params:['speed','intensity','color','color2','color3']},
+  {id:'triChase',      label:'Tri Chase',        params:['speed','color','color2','color3']},
+  {id:'multiComet',    label:'Multi Comet',      params:['speed','intensity','color','color2']},
+  {id:'loading',       label:'Loading',          params:['speed','intensity','color','color2']},
+  {id:'stream',        label:'Stream',           params:['speed','intensity']},
 ];
 const EFFECT_MAP = Object.fromEntries(EFFECTS.map(e => [e.id, e]));
 
@@ -78,29 +87,29 @@ const WLED_EFFECTS_REAL = [
   {id:36,name:'Sweep Random',sim:'wipe',desc:'Sweep effect with random colors.'},
   {id:37,name:'Running 2',sim:'runningLights',desc:'Alternate running-lights pattern.'},
   {id:38,name:'Aurora',sim:'noise',desc:'Slow-shifting aurora-like color bands.'},
-  {id:39,name:'Stream',sim:'chase',desc:'Flowing stream of color along the strip.'},
+  {id:39,name:'Stream',sim:'stream',desc:'Flowing stream of color along the strip.'},
   {id:40,name:'Scanner',sim:'scan',desc:'Cylon-style scanning eye.'},
   {id:41,name:'Lighthouse',sim:'scan',desc:'Slow sweeping beam.'},
   {id:42,name:'Fireworks',sim:'sparkle',desc:'Random bursts that fade out.'},
-  {id:43,name:'Rain',sim:'chase',desc:'Droplets of light run down the strip.'},
+  {id:43,name:'Rain',sim:'rain',desc:'Droplets of light run down the strip.'},
   {id:44,name:'Merry Christmas',sim:'runningLights',desc:'Red & green alternating chase.'},
   {id:45,name:'Fire Flicker',sim:'fire',desc:'Simulates flickering flame colors.'},
   {id:46,name:'Gradient',sim:'wipe',desc:'Moving gradient band between colors.'},
-  {id:47,name:'Loading',sim:'chase',desc:'A loading-bar style fill and repeat.'},
-  {id:48,name:'Police',sim:'chase',desc:'Red/blue police-light alternation.'},
-  {id:49,name:'Police All',sim:'wipe',desc:'Police lights across the whole strip.'},
-  {id:50,name:'Two Dots',sim:'chase',desc:'Two colored dots move along the strip.'},
+  {id:47,name:'Loading',sim:'loading',desc:'A bright peak travels the strip and wraps, fading behind it.'},
+  {id:48,name:'Police',sim:'police',desc:'Red/blue police-light alternation.'},
+  {id:49,name:'Police All',sim:'police',desc:'Police lights across the whole strip.'},
+  {id:50,name:'Two Dots',sim:'twoDots',desc:'Two colored dots move along the strip.'},
   {id:51,name:'Two Areas',sim:'wipe',desc:'Two colored regions move and swap.'},
   {id:52,name:'Circus',sim:'theaterChase',desc:'Circus-tent style alternating chase.'},
   {id:53,name:'Halloween',sim:'runningLights',desc:'Purple & orange running pattern.'},
-  {id:54,name:'Tri Chase',sim:'chase',desc:'Chase using three colors.'},
+  {id:54,name:'Tri Chase',sim:'triChase',desc:'Chase using three colors.'},
   {id:55,name:'Tri Wipe',sim:'wipe',desc:'Wipe using three colors in sequence.'},
   {id:56,name:'Tri Fade',sim:'breathe',desc:'Fades through three colors.'},
   {id:57,name:'Lightning',sim:'sparkle',desc:'Simulated lightning flashes.'},
   {id:58,name:'ICU',sim:'scan',desc:'Two "eyes" scan and occasionally meet.'},
-  {id:59,name:'Multi Comet',sim:'chase',desc:'Several comets chase with fading tails.'},
+  {id:59,name:'Multi Comet',sim:'multiComet',desc:'Several comets chase with fading tails.'},
   {id:60,name:'Scanner Dual',sim:'scan',desc:'Two scanning eyes, mirrored.'},
-  {id:61,name:'Stream 2',sim:'chase',desc:'Alternate flowing stream pattern.'},
+  {id:61,name:'Stream 2',sim:'stream',desc:'Alternate flowing stream pattern.'},
   {id:62,name:'Oscillate',sim:'scan',desc:'Blocks oscillate back and forth.'},
   {id:63,name:'Pride 2015',sim:'rainbowCycle',desc:'Shifting rainbow, classic FastLED demo reel.'},
   {id:64,name:'Juggle',sim:'twinkle',desc:'Several bouncing, blending dots.'},
@@ -115,8 +124,8 @@ const WLED_EFFECTS_REAL = [
   {id:73,name:'Noise 4',sim:'noise',desc:'Noise variant 4.'},
   {id:74,name:'Colortwinkles',sim:'twinkle',desc:'Twinkling LEDs cycling colors.'},
   {id:75,name:'Lake',sim:'noise',desc:'Calm, water-like shifting color.'},
-  {id:76,name:'Meteor',sim:'chase',desc:'A meteor with a fading tail.'},
-  {id:77,name:'Meteor Smooth',sim:'chase',desc:'Smoother meteor with softer tail.'},
+  {id:76,name:'Meteor',sim:'meteor',desc:'A meteor with a fading tail.'},
+  {id:77,name:'Meteor Smooth',sim:'meteor',desc:'Smoother meteor with softer tail.'},
   {id:78,name:'Railway',sim:'blink',desc:'Alternating railway-crossing style blink.'},
   {id:79,name:'Ripple',sim:'sparkle',desc:'Ripples that expand and fade.'},
   {id:80,name:'Twinklefox',sim:'twinkle',desc:'Soft, foggy twinkling.'},
@@ -131,11 +140,11 @@ const WLED_EFFECTS_REAL = [
   {id:89,name:'Fireworks Starburst',sim:'sparkle',desc:'Multi-color firework bursts.'},
   {id:90,name:'Fireworks 1D',sim:'sparkle',desc:'Fireworks adapted for a single strip.'},
   {id:91,name:'Bouncing Balls',sim:'scan',desc:'Simulated bouncing balls with gravity.'},
-  {id:92,name:'Sinelon',sim:'chase',desc:'A dot moves back and forth, sine-timed.'},
-  {id:93,name:'Sinelon Dual',sim:'chase',desc:'Two sinelon dots, mirrored.'},
-  {id:94,name:'Sinelon Rainbow',sim:'chase',desc:'Sinelon cycling through a rainbow.'},
+  {id:92,name:'Sinelon',sim:'sinelon',desc:'A dot moves back and forth, sine-timed.'},
+  {id:93,name:'Sinelon Dual',sim:'sinelon',desc:'Two sinelon dots, mirrored.'},
+  {id:94,name:'Sinelon Rainbow',sim:'sinelon',desc:'Sinelon cycling through a rainbow.'},
   {id:95,name:'Popcorn',sim:'sparkle',desc:'Random "pops" appear along the strip.'},
-  {id:96,name:'Drip',sim:'chase',desc:'Simulated dripping liquid with bounce.'},
+  {id:96,name:'Drip',sim:'rain',desc:'Simulated dripping liquid with bounce.'},
   {id:97,name:'Plasma',sim:'noise',desc:'Classic plasma color-field animation.'},
   {id:98,name:'Percent',sim:'wipe',desc:'Fills a percentage of the strip.'},
   {id:99,name:'Ripple Rainbow',sim:'sparkle',desc:'Ripple effect cycling through a rainbow.'},
@@ -150,7 +159,7 @@ const WLED_EFFECTS_REAL = [
   {id:108,name:'Sine',sim:'runningLights',desc:'Sine-wave brightness pattern.'},
   {id:109,name:'Phased Noise',sim:'noise',desc:'Phased wave with added noise.'},
   {id:110,name:'Flow',sim:'runningLights',desc:'Smooth flowing color gradient.'},
-  {id:111,name:'Chunchun',sim:'chase',desc:'Birds-on-a-wire style chase.'},
+  {id:111,name:'Chunchun',sim:'multiComet',desc:'Birds-on-a-wire style chase.'},
   {id:112,name:'Dancing Shadows',sim:'scan',desc:'Moving spotlight "shadow" dancers.'},
   {id:113,name:'Washing Machine',sim:'runningLights',desc:'Oscillating, wrapping color motion.'},
   {id:114,name:'Candy Cane',sim:'runningLights',desc:'Red & white candy-cane stripe motion.'},
@@ -260,6 +269,111 @@ const EFFECT_RENDERERS = {
     const flicker = 0.35 + 0.65 * r * (0.6 + 0.4 * intensityFrac);
     return helpers.lerpRgb(c1, c2, helpers.clamp(flicker, 0, 1));
   },
+  // A bright head dragging a fading tail. The fade is what separates a meteor
+  // from a plain moving dot, so it decays with distance behind the head.
+  meteor: ({c1, c2, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const tail = 0.08 + intensityFrac * 0.35;
+    const head = (t * speedFactor * 0.4) % 1;
+    let behind = head - frac;
+    if (behind < 0) behind += 1;               // wrap: tail trails off the end
+    const b = helpers.clamp(1 - behind / tail, 0, 1);
+    return helpers.lerpRgb(c2, c1, b * b);     // squared -> fades fast, like WLED
+  },
+  // A dot swinging on a sine, leaving a short trail. Unlike chase it eases at
+  // the ends and comes back rather than wrapping around.
+  sinelon: ({c1, c2, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const trail = 0.05 + intensityFrac * 0.2;
+    const pos = 0.5 + 0.5 * Math.sin(t * speedFactor * 0.6);
+    const d = Math.abs(frac - pos);
+    const b = helpers.clamp(1 - d / trail, 0, 1);
+    return helpers.lerpRgb(c2, c1, b * b);
+  },
+  // Two rotating beams, red one half and blue the other. Deliberately ignores
+  // the run's colors: a police light that isn't red and blue isn't the effect.
+  police: ({t, speedFactor, frac, intensityFrac, helpers}) => {
+    const width = 0.06 + intensityFrac * 0.18;
+    const spin = (t * speedFactor * 0.35) % 1;
+    const beam = (centre) => {
+      let d = Math.abs(frac - centre);
+      d = Math.min(d, 1 - d);                  // beams wrap around the strip
+      return helpers.clamp(1 - d / width, 0, 1);
+    };
+    const red = beam(spin);
+    const blue = beam((spin + 0.5) % 1);
+    return [255 * red, 0, 255 * blue];
+  },
+  // Drops running down the strip, each with a short tail. Kept sparse on
+  // purpose — a dense version just reads as a wipe.
+  rain: ({c1, c2, n, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const drops = Math.max(1, Math.round(1 + intensityFrac * 4));
+    const tail = 0.04 + intensityFrac * 0.06;
+    let best = 0;
+    for (let d = 0; d < drops; d++) {
+      // Stagger each drop's phase and speed so they don't fall in lockstep.
+      const phase = helpers.hash01(d * 12.9898);
+      const speed = 0.25 + helpers.hash01(d * 4.1414) * 0.5;
+      const head = ((t * speedFactor * speed) + phase) % 1;
+      let behind = head - frac;
+      if (behind < 0) behind += 1;
+      best = Math.max(best, helpers.clamp(1 - behind / tail, 0, 1));
+    }
+    return helpers.lerpRgb(c2, c1, best * best);
+  },
+  // Two dots chasing round the strip, half a lap apart, each in its own color.
+  twoDots: ({c1, c2, c3, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const width = 0.04 + intensityFrac * 0.1;
+    const lead = (t * speedFactor * 0.4) % 1;
+    const near = (centre) => {
+      let d = Math.abs(frac - centre);
+      d = Math.min(d, 1 - d);
+      return helpers.clamp(1 - d / width, 0, 1);
+    };
+    const a = near(lead);
+    const b = near((lead + 0.5) % 1);
+    if (a >= b) return helpers.lerpRgb(c2, c1, a);
+    return helpers.lerpRgb(c2, c3, b);
+  },
+  // Three colors marching in bands, cycling as they go.
+  triChase: ({c1, c2, c3, i, t, speedFactor}) => {
+    const off = Math.floor(t * speedFactor * 4);
+    const band = ((i + off) % 3 + 3) % 3;
+    return band === 0 ? c1 : band === 1 ? c2 : c3;
+  },
+  // Several comets at once, evenly spaced but at different speeds so they
+  // drift apart and overlap rather than moving as one rigid comb.
+  multiComet: ({c1, c2, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const comets = 3;
+    const tail = 0.05 + intensityFrac * 0.12;
+    let best = 0;
+    for (let k = 0; k < comets; k++) {
+      // Same speed, evenly spaced: differing speeds let them bunch into one
+      // blob, which stops reading as "multi" at all.
+      const head = ((t * speedFactor * 0.35) + k / comets) % 1;
+      let behind = head - frac;
+      if (behind < 0) behind += 1;
+      best = Math.max(best, helpers.clamp(1 - behind / tail, 0, 1));
+    }
+    return helpers.lerpRgb(c2, c1, best * best);
+  },
+  // WLED's Loading is gradient_base(true): a bright peak travelling along the
+  // strip and wrapping, fading linearly behind it. Despite the name it isn't a
+  // progress bar — matched against FX.cpp rather than the label.
+  loading: ({c1, c2, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const spread = 0.15 + intensityFrac * 0.5;
+    const peak = (t * speedFactor * 0.3) % 1;
+    let behind = peak - frac;
+    if (behind < 0) behind += 1;
+    const b = helpers.clamp(1 - behind / spread, 0, 1);
+    return helpers.lerpRgb(c2, c1, b);
+  },
+  // WLED's Stream is mode_running_random: the whole strip carries zones of
+  // random hue that scroll along it. Intensity sets zone size.
+  stream: ({i, t, speedFactor, intensityFrac, helpers}) => {
+    const zoneSize = Math.max(1, Math.round(1 + (1 - intensityFrac) * 8));
+    const shift = Math.floor(t * speedFactor * 4);
+    const zone = Math.floor((i + shift) / zoneSize);
+    return helpers.hsl2rgb(helpers.hash01(zone * 2.7183) * 360, 0.9, 0.5);
+  },
   noise: ({c1, c2, c3, i, t, speedFactor, paletteStops, helpers}) => {
     const val = 0.5 + 0.5 * (
       Math.sin(i * 0.3 + t * speedFactor) * 0.5 +
@@ -276,4 +390,16 @@ function computeEffectColor(run, i, n, t, helpers) {
   const renderer = EFFECT_RENDERERS[key] || EFFECT_RENDERERS.chase;
   const context = createEffectContext(run, i, n, t, helpers);
   return renderer(context);
+}
+
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = {
+    EFFECTS,
+    EFFECT_MAP,
+    EFFECT_RENDERERS,
+    WLED_EFFECTS_REAL,
+    WLED_EFFECTS_BY_ID,
+    computeEffectColor,
+    createEffectContext,
+  };
 }
