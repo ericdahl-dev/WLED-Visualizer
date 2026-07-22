@@ -74,6 +74,30 @@ function applyDeviceState(state, runs, helpers) {
   };
 }
 
+// Where a newly drawn run sits on the strip. A connected device knows its own
+// geometry, so a new run lines up with what it is actually driving instead of
+// an arbitrary default that matches no hardware.
+function newRunGeometry(opts) {
+  const segments = opts.segments || [];
+  const seg = segments[opts.runIndex];
+  if (seg) return { startIndex: seg.start, ledCount: seg.len };
+  const remaining = (opts.stripLen || 0) - opts.previousEnd;
+  return {
+    startIndex: opts.previousEnd,
+    ledCount: remaining > 0 ? remaining : 30,
+  };
+}
+
+// How a run's geometry differs from the segment it mirrors, or null when they
+// agree. Deliberately reported rather than applied: ledCount is layout the
+// user drew and it feeds the exported segment bounds, so adopting it is their
+// call, unlike effect or palette which re-sync harmlessly every frame.
+function geometryMismatch(run, seg) {
+  if (!seg) return null;
+  if (run.startIndex === seg.start && run.ledCount === seg.len) return null;
+  return { startIndex: seg.start, ledCount: seg.len };
+}
+
 // The badge is how you tell real device pixels from a local approximation, so
 // the two states read differently rather than both just saying "LIVE".
 function renderLiveBadge(el, status) {
@@ -99,6 +123,8 @@ if (typeof module !== 'undefined' && module.exports) {
     isFrameFresh,
     applyDeviceState,
     renderLiveBadge,
+    newRunGeometry,
+    geometryMismatch,
     LIVE_PIXEL_STALE_MS,
   };
 }
