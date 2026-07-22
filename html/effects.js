@@ -385,6 +385,15 @@ const EFFECT_RENDERERS = {
   }
 };
 
+// WLED's segment mirror: the effect renders on half the (grouped) length and
+// reflects about the centre — FX_fcn.cpp halves vLength with (v+1)/2 and
+// writes each pixel to both x and len-1-x. Same mapping here, per group.
+function mirroredGroup(groupIndex, totalGroups) {
+  const count = Math.ceil(totalGroups / 2);
+  const index = groupIndex < count ? groupIndex : totalGroups - 1 - groupIndex;
+  return { index, count };
+}
+
 function computeEffectColor(run, i, n, t, helpers) {
   const key = run.simKey || run.effect;
   const renderer = EFFECT_RENDERERS[key] || EFFECT_RENDERERS.chase;
@@ -400,6 +409,7 @@ if (typeof module !== 'undefined' && module.exports) {
     WLED_EFFECTS_REAL,
     WLED_EFFECTS_BY_ID,
     computeEffectColor,
+    mirroredGroup,
     createEffectContext,
   };
 }

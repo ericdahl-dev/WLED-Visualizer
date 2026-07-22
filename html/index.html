@@ -423,17 +423,15 @@
           const groupIndex = Math.floor(i/cell);
           const px = p; // already in pixel space
 
-          if(!isLit){
-            ctx.beginPath();
-            ctx.fillStyle = `rgba(0,0,0,${(opacity*0).toFixed(3)})`;
-            ctx.arc(px.x, px.y, 2, 0, Math.PI*2);
-            ctx.fill();
-            return;
-          }
+          if(!isLit) return; // spacing LEDs stay dark — nothing to paint
 
+          // Mirror halves the effect's virtual length and reflects it,
+          // matching WLED's segment semantics. Pixel-exact frames already
+          // have it baked in by the device.
+          const g = (run.mirror && !pixelExact) ? mirroredGroup(groupIndex, totalGroups) : {index: groupIndex, count: totalGroups};
           const rgb = pixelExact
             ? (livePixelColor(run.startIndex + i) || [0,0,0])
-            : effectColor(run, groupIndex, totalGroups, animTime);
+            : effectColor(run, g.index, g.count, animTime);
           const core = rgbToCss(rgb, opacity);
           const halo = rgbToCss(rgb, opacity*0.28);
           ctx.beginPath();
@@ -1404,7 +1402,6 @@
         alert('Could not read this file as a WLED Layout Studio project JSON.');
       }
     };
-    reader.readAsDataURL ? null : null;
     reader.readAsText(file);
   });
 
