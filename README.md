@@ -18,20 +18,66 @@ A browser based [WLED](https://github.com/wled/WLED) simulator for mapping displ
 - Run length/count definition
 - Photo reference import
 - Project import/export
-- 118 simulated WLED effects
+- 118 WLED effects selectable by their real name and id, with 15 built-in simulations approximating them when you're working offline
 - 72 pre-defined color palettes scraped from palettes.cpp
+- Connect to a live controller and read its effect list, palettes and device info
+- **Live Mirror** — show exactly what the controller is doing, LED for LED
+- New runs take their LED count and start index from the connected controller
 
 ## User interface
 
 ![Interface](images/interface_01.jpg)
 
+## Live Mirror
+
+Connect to a controller, then press **Live Mirror**. The canvas stops guessing and starts showing the real thing.
+
+WLED can stream the actual contents of its LED buffer over a websocket — the same feed its built-in Peek uses. Live Mirror asks for that stream and paints those colors straight onto the runs you've drawn. What you see is what the strip is doing: the real effect at the real speed, with brightness, grouping, spacing and segment bounds already applied by the controller. Effects that no simulator could reproduce, like the audio-reactive ones, come through correctly because nothing is being simulated.
+
+The badge next to Connect tells you which mode you're in:
+
+| Badge | Meaning |
+| --- | --- |
+| `● LIVE · PIXEL` | Painting real LED colors streamed from the device |
+| `● LIVE` | Device isn't streaming, so effects are simulated locally from its segment settings |
+
+If the stream stops, it falls back to the local simulation on its own, so older firmware and devices without live view still work.
+
+While mirroring, a run's effect, palette, colors, speed and segment options follow the device and are overwritten on each update. Its **geometry is left alone** — LED count and start index are the layout you drew, and they're what gets exported, so the device never silently rewrites them. When a run disagrees with the segment it mirrors, the inspector says so and offers to adopt the device's numbers.
+
+Live Mirror only reads from the controller. Nothing is written to your device unless you use Export.
+
 ## Installation
 
 Download the HTML folder and open index.html. That's pretty much it.
 
+There's no build step and nothing to install. The app is still plain HTML, CSS and JavaScript that runs straight from the folder.
+
+## Development
+
+Only needed if you're changing the code. The app itself has no dependencies.
+
+```
+npm install
+npm test
+```
+
+Tests cover the live-view protocol handling — frame parsing, LED index mapping, the fallback to simulation, and how device state maps onto runs.
+
 ## What's lacking
 
 A lot, actually. There's a lot I'd like to do here, but my JS skills aren't super strong and vibe coding can only go so far. This v0.01 hopefully acts as a solid jumping off point to someone more knowledgeable than I in translating (maybe even interfacing) the arduino libraries from the actual WLED repo into a web interface. I'd like this to be a more robust, feature rich version of WLED's native Peek function.
+
+[Live Mirror](#live-mirror) is a first pass at that last part — it streams the controller's real LED buffer rather than approximating it. The rest of the wishlist is tracked as issues:
+
+| Goal | Issue |
+| --- | --- |
+| Multiple controller support | [#6](../../issues/6) |
+| 2D matrix support | [#7](../../issues/7) |
+| Effect layering and blending | [#8](../../issues/8) |
+| More simulated effects (15 renderers behind 118 names) | [#9](../../issues/9) |
+| Import a project from a connected controller | [#10](../../issues/10) |
+| Multiple segments per run | [#11](../../issues/11) |
 
 ## Everything else
 
