@@ -1,7 +1,7 @@
 import { test } from 'vitest';
 import assert from 'node:assert';
 
-import { EFFECT_RENDERERS, computeEffectColor } from '../html/effects.js';
+import { EFFECT_RENDERERS, computeEffectColor, mirroredGroup } from '../html/effects.js';
 
 // The real helpers the app ships — not copies. getPaletteStops stays a stub
 // because it reads app palette state; these tests use content colours.
@@ -184,4 +184,20 @@ test('stream lights the whole strip and flows along it', () => {
   const before = strip('stream', 60, 2).map(lum).join(',');
   const after = strip('stream', 60, 4).map(lum).join(',');
   assert.notStrictEqual(before, after, 'stream is not moving');
+});
+
+// WLED's mirror halves the segment's virtual length and reflects it about the
+// centre (FX_fcn.cpp: vLength = (vLength+1)/2, write to both x and len-1-x).
+// The sim previously edited/exported mirror but ignored it when drawing.
+test('mirrored groups reflect about the segment centre', () => {
+  // 4 groups -> effect sees 2, layout is 0,1,1,0
+  assert.deepStrictEqual(
+    [0, 1, 2, 3].map((g) => mirroredGroup(g, 4)),
+    [{ index: 0, count: 2 }, { index: 1, count: 2 }, { index: 1, count: 2 }, { index: 0, count: 2 }]
+  );
+  // odd length: middle LED is its own mirror
+  assert.deepStrictEqual(
+    [0, 1, 2, 3, 4].map((g) => mirroredGroup(g, 5).index),
+    [0, 1, 2, 1, 0]
+  );
 });
