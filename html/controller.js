@@ -141,6 +141,23 @@ function migrateProjectControllers(data, makeId) {
   return { controllers, runs };
 }
 
+// Where the next run on a controller's strip starts: after the last LED any
+// of that controller's runs claim. Each controller is its own address space.
+function previousEndFor(runs, controllerId) {
+  return runs
+    .filter((r) => r.controllerId === controllerId)
+    .reduce((end, r) => Math.max(end, r.startIndex + r.ledCount), 0);
+}
+
+// Deleting a controller is blocked while it owns runs (maintainer decision on
+// the multi-controller design) and the last controller can never be removed.
+function canDeleteController(runs, controllerId, controllerCount) {
+  if (controllerCount <= 1) return { ok: false, reason: 'the last controller cannot be deleted' };
+  const owned = runs.filter((r) => r.controllerId === controllerId).length;
+  if (owned) return { ok: false, reason: 'delete or reassign its ' + owned + ' run(s) first' };
+  return { ok: true, reason: '' };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { createController, deviceSegmentsOf, migrateProjectControllers };
+  module.exports = { createController, deviceSegmentsOf, migrateProjectControllers, previousEndFor, canDeleteController };
 }
