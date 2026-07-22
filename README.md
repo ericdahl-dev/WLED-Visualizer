@@ -68,16 +68,14 @@ Tests cover the live-view protocol handling — frame parsing, LED index mapping
 
 A lot, actually. There's a lot I'd like to do here, but my JS skills aren't super strong and vibe coding can only go so far. This v0.01 hopefully acts as a solid jumping off point to someone more knowledgeable than I in translating (maybe even interfacing) the arduino libraries from the actual WLED repo into a web interface. I'd like this to be a more robust, feature rich version of WLED's native Peek function.
 
-[Live Mirror](#live-mirror) is a first pass at that last part — it streams the controller's real LED buffer rather than approximating it. The rest of the wishlist is tracked as issues:
+[Live Mirror](#live-mirror) is a first pass at that last part — it streams the controller's real LED buffer rather than approximating it. Still on the list, roughly in the order they'd help most:
 
-| Goal | Issue |
-| --- | --- |
-| Multiple controller support | [#6](../../issues/6) |
-| 2D matrix support | [#7](../../issues/7) |
-| Effect layering and blending | [#8](../../issues/8) |
-| More simulated effects (15 renderers behind 118 names) | [#9](../../issues/9) |
-| Import a project from a connected controller | [#10](../../issues/10) |
-| Multiple segments per run | [#11](../../issues/11) |
+- **Multiple controller support.** One `controllerIp` today, so a project can only describe one ESP32.
+- **Import a project from a connected controller.** Connect and export work; import only updates existing runs, so an already-built display has to be recreated by hand.
+- **More simulated effects.** 118 effects are selectable by real name and id, but there are ~15 simulation renderers behind them, so most preview as an approximation of something else. Only matters offline — a connected controller is exact via Live Mirror.
+- **Segmentation.** One run maps to one segment; WLED allows several segments per strip.
+- **2D matrix support.** Runs are 1D paths, and a lot of modern WLED effects are 2D-native.
+- **Effect layering and blending.** Runs render independently and can't overlap.
 
 ## Everything else
 
