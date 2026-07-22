@@ -121,6 +121,26 @@ function createController(opts) {
   return { connect, getState, openLiveFeed, closeLiveFeed };
 }
 
+// Bring a loaded project up to the multi-controller model. Legacy projects
+// (no controllers key) get one synthesized controller owning every run; the
+// discriminator is the key's presence, not a version field. Zero-loss.
+function migrateProjectControllers(data, makeId) {
+  let controllers = Array.isArray(data.controllers) && data.controllers.length
+    ? data.controllers.map((c) => ({ id: c.id, name: c.name, ip: c.ip || '' }))
+    : [{
+        id: makeId(),
+        name: 'Controller 1',
+        ip: (data.meta && data.meta.connectedController) || '',
+      }];
+  const fallback = controllers[0].id;
+  const runs = (data.runs || []).map((r) => (
+    r.controllerId && controllers.some((c) => c.id === r.controllerId)
+      ? r
+      : Object.assign({}, r, { controllerId: fallback })
+  ));
+  return { controllers, runs };
+}
+
 if (typeof module !== 'undefined' && module.exports) {
-  module.exports = { createController, deviceSegmentsOf };
+  module.exports = { createController, deviceSegmentsOf, migrateProjectControllers };
 }
