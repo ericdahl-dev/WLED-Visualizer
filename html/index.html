@@ -75,6 +75,7 @@
 
 <script src="color.js"></script>
 <script src="ui.js"></script>
+<script src="controller.js"></script>
 <script src="palettes.js"></script>
 <script src="effects.js"></script>
 <script src="livemirror.js"></script>
@@ -118,8 +119,8 @@
   // intensity, grouping/spacing, on/off, brightness) instead of being edited
   // by hand. Runs are matched to device segments by array order/index.
   let liveMirror = false;
-  let liveSocket = null;
-  let livePollTimer = null;
+  // All device transport lives behind the controller client (controller.js).
+  const controller = createController();
   let liveOn = true;          // device's global on/off state, while mirroring
   let liveMirroredCount = 0;  // how many runs (from index 0) are currently mirrored
   let liveSegCount = 0;       // segments the device last reported, for the badge
@@ -1026,26 +1027,12 @@
     controllerIp = ip;
     setConnStatus('connecting…','connecting');
     try{
-      const base = 'http://' + ip;
-      const [effRes, palRes] = await Promise.all([
-        fetch(base + '/json/eff'),
-        fetch(base + '/json/pal')
-      ]);
-      if(!effRes.ok || !palRes.ok) throw new Error('bad response');
-      liveEffects = await effRes.json();
-      livePalettes = await palRes.json();
-      try{
-        const infoRes = await fetch(base + '/json/info');
-        deviceInfo = infoRes.ok ? await infoRes.json() : null;
-      }catch(e){ deviceInfo = null; }
+      const dev = await controller.connect(ip);
+      liveEffects = dev.effects;
+      livePalettes = dev.palettes;
+      deviceInfo = dev.info;
       // Segment bounds seed the geometry of runs drawn from here on.
-      try{
-        const stateRes = await fetch(base + '/json/state');
-        const state = stateRes.ok ? await stateRes.json() : null;
-        deviceSegments = (state && Array.isArray(state.seg))
-          ? state.seg.map(s=>({start: s.start, len: s.len}))
-          : [];
-      }catch(e){ deviceSegments = []; }
+      deviceSegments = dev.segments;
       const label = (deviceInfo && deviceInfo.name) ? `${deviceInfo.name} · ${liveEffects.length} fx` : `connected · ${liveEffects.length} fx`;
       setConnStatus(label, 'connected');
       document.getElementById('btnLiveMirror').disabled = false;
@@ -1085,16 +1072,12 @@
     if(!controllerIp) return;
     let state;
     try{
-      const res = await fetch('http://'+controllerIp+'/json/state');
-      if(!res.ok) throw new Error('bad state response');
-      state = await res.json();
+      state = await controller.getState();
     }catch(err){
       setConnStatus('import failed — device unreachable', 'error');
       return;
     }
-    deviceSegments = Array.isArray(state.seg)
-      ? state.seg.map(s=>({start: s.start, len: s.len}))
-      : [];
+    deviceSegments = deviceSegmentsOf(state);
     const result = importRuns(state, runs, {
       createRun: defaultRun,
       helpers: deviceStateHelpers(),
@@ -1120,56 +1103,6 @@
       liveMirroredCount = result.mirroredCount;
       liveSegCount = result.segCount;
     }, {background: true});
-  }
-
-  async function fetchLiveState(){
-    try{
-      const res = await fetch('http://'+controllerIp+'/json/state');
-      if(!res.ok) throw new Error('bad state response');
-      applyLiveState(await res.json());
-    }catch(err){
-      setConnStatus('live mirror lost connection', 'error');
-      stopLiveMirror();
-    }
-  }
-
-  function startLivePolling(){
-    stopLivePolling();
-    fetchLiveState();
-    livePollTimer = setInterval(fetchLiveState, 1000);
-  }
-  function stopLivePolling(){
-    if(livePollTimer){ clearInterval(livePollTimer); livePollTimer = null; }
-  }
-
-  function connectLiveSocket(){
-    try{
-      liveSocket = new WebSocket('ws://'+controllerIp+'/ws');
-    }catch(err){
-      startLivePolling();
-      return;
-    }
-    liveSocket.binaryType = 'arraybuffer';
-    liveSocket.onopen = ()=>{
-      fetchLiveState();
-      // Ask for the live LED feed. Devices that don't support it simply never
-      // send binary frames, and we keep running the local effect simulation.
-      try{ liveSocket.send(JSON.stringify({lv:true})); }catch(err){}
-    };
-    liveSocket.onmessage = (ev)=>{
-      if(ev.data instanceof ArrayBuffer){ applyLivePixels(ev.data); return; }
-      let data;
-      try{ data = JSON.parse(ev.data); }catch(err){ return; }
-      const state = (data && data.state) ? data.state : data;
-      if(state && (Array.isArray(state.seg) || typeof state.bri==='number')) applyLiveState(state);
-    };
-    liveSocket.onclose = ()=>{
-      liveSocket = null;
-      if(liveMirror && !livePollTimer) startLivePolling();
-    };
-    liveSocket.onerror = ()=>{
-      if(liveSocket) liveSocket.close();
-    };
   }
 
   function applyLivePixels(buf){
@@ -1217,7 +1150,14 @@
     if(btn) btn.textContent = 'Stop Live Mirror';
     const slider = document.getElementById('masterBrightness');
     if(slider) slider.disabled = true;
-    connectLiveSocket();
+    controller.openLiveFeed({
+      onState: applyLiveState,
+      onFrame: applyLivePixels,
+      onLost: ()=>{
+        setConnStatus('live mirror lost connection', 'error');
+        stopLiveMirror();
+      },
+    });
     updateLiveBadge(0);
   }
 
@@ -1228,13 +1168,9 @@
     if(btn) btn.textContent = 'Live Mirror';
     const slider = document.getElementById('masterBrightness');
     if(slider) slider.disabled = false;
-    if(liveSocket){
-      // Tell the device to stop pushing LED frames before dropping the socket.
-      try{ if(liveSocket.readyState===1) liveSocket.send(JSON.stringify({lv:false})); }catch(err){}
-      liveSocket.onclose = null; liveSocket.close(); liveSocket = null;
-    }
+    // The client sends the stop handshake and kills socket + polling.
+    controller.closeLiveFeed();
     liveFrame = null; livePixelsAt = null;
-    stopLivePolling();
     // Also drops the "live-mirrored" banner, which otherwise kept warning that
     // the device would overwrite fields after mirroring had stopped.
     commit(()=>{ liveSegCount = 0; });
