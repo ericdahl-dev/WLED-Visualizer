@@ -1,0 +1,14 @@
+{
+  "name": "wled-visualizer",
+  "private": true,
+  "description": "Trace, simulate and export WLED LED layouts from a photo.",
+  "type": "commonjs",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "happy-dom": "^20.11.0",
+    "vitest": "^4.1.10"
+  }
+}
