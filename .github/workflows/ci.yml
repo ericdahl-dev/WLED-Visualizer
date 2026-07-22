@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+
+      # The app is a no-build page; the inline script never passes through a
+      # bundler, so parse errors only surface in a browser. Check it here.
+      - name: Syntax-check modules and the inline script
+        run: |
+          for f in html/*.js; do node --check "$f"; done
+          node -e "
+            const re = /<script>([\s\S]*?)<\/script>/g;
+            const src = require('fs').readFileSync('html/index.html','utf8');
+            let m, last = null;
+            while ((m = re.exec(src))) last = m[1];
+            require('fs').writeFileSync('/tmp/inline.js', last);
+          "
+          node --check /tmp/inline.js
+
+      # Every effect must point at a renderer that exists, and the table must
+      # stay free of duplicate ids.
+      - name: Effect table invariants
+        run: |
+          node -e "
+            const {WLED_EFFECTS_REAL, EFFECT_RENDERERS} = require('./html/effects.js');
+            const missing = WLED_EFFECTS_REAL.filter(e => !EFFECT_RENDERERS[e.sim]);
+            const dupes = WLED_EFFECTS_REAL.length - new Set(WLED_EFFECTS_REAL.map(e => e.id)).size;
+            if (missing.length) { console.error('missing renderers:', missing.map(e=>e.name)); process.exit(1); }
+            if (dupes) { console.error('duplicate ids:', dupes); process.exit(1); }
+            console.log(WLED_EFFECTS_REAL.length + ' effects, all renderers present, no duplicate ids');
+          "
