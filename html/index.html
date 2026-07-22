@@ -29,6 +29,8 @@
       <input type="text" id="controllerIp" placeholder="Controller IP" style="width:130px;background:var(--surface-raised);border:1px solid var(--border);color:var(--text-primary);padding:8px 9px;border-radius:8px;font-family:var(--font-mono);font-size:12px;">
       <button class="hbtn" id="btnConnect">Connect</button>
       <span id="connStatus" style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;">not connected</span>
+      <button class="hbtn" id="btnLiveMirror" disabled title="Mirror this device's live effect, palette, colors, speed/intensity and segment state onto the canvas in real time — a richer version of WLED's native Peek.">Live Mirror</button>
+      <span id="liveBadge" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);white-space:nowrap;display:none;">&#9679; LIVE</span>
     </div>
 
     <div class="brightness-control">
@@ -107,6 +109,16 @@
   let deviceInfo = null;
   let inspectorTab = 'settings'; // 'settings' | 'device'
 
+  // Live Mirror ("Peek"): when on, runs are continuously synced from the
+  // connected device's real segment state (effect, palette, colors, speed,
+  // intensity, grouping/spacing, on/off, brightness) instead of being edited
+  // by hand. Runs are matched to device segments by array order/index.
+  let liveMirror = false;
+  let liveSocket = null;
+  let livePollTimer = null;
+  let liveOn = true;          // device's global on/off state, while mirroring
+  let liveMirroredCount = 0;  // how many runs (from index 0) are currently mirrored
+
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
   const wrap = document.getElementById('canvasWrap');
@@ -121,6 +133,10 @@
     if(hex.length===3) hex = hex.split('').map(c=>c+c).join('');
     const n = parseInt(hex,16);
     return [(n>>16)&255,(n>>8)&255,n&255];
+  }
+  function rgbArrToHex(arr){
+    if(!Array.isArray(arr)) return '#000000';
+    return '#' + [arr[0],arr[1],arr[2]].map(v=>clamp(v||0,0,255).toString(16).padStart(2,'0')).join('');
   }
   function rgbToCss(rgb, alpha){
     alpha = alpha===undefined?1:alpha;
@@ -379,7 +395,7 @@
       ctx.fillRect(0,0,w,h);
     }
 
-    const masterB = masterBrightness/255;
+    const masterB = (masterBrightness/255) * (liveMirror && !liveOn ? 0 : 1);
 
     runs.forEach(run=>{
       if(!run.visible) return;
@@ -774,8 +790,11 @@
     const density = densityPerM(run).toFixed(1);
     const effectDef = EFFECT_MAP[run.simKey || run.effect] || EFFECT_MAP.chase;
     const showParam = (p)=> effectDef.params.includes(p);
+    const runIdx = runs.indexOf(run);
+    const isMirrored = liveMirror && runIdx>=0 && runIdx<liveMirroredCount;
 
     el.innerHTML = `
+      ${isMirrored ? `<div class="hint" style="background:rgba(94,234,212,0.08);border:1px solid rgba(94,234,212,0.3);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:var(--accent);text-transform:none;letter-spacing:0;">&#9679; Live-mirrored from ${controllerIp} — effect, palette, colors, speed/intensity and segment options update automatically here and will be overwritten by the device on the next update.</div>` : ''}
       <div class="field">
         <label>Name</label>
         <input type="text" id="f_name" value="${run.name.replace(/"/g,'&quot;')}">
@@ -999,6 +1018,8 @@
   async function connectController(){
     const ip = document.getElementById('controllerIp').value.trim();
     if(!ip){ setConnStatus('enter an ip first','error'); return; }
+    stopLiveMirror();
+    document.getElementById('btnLiveMirror').disabled = true;
     controllerIp = ip;
     setConnStatus('connecting…','connecting');
     try{
@@ -1016,6 +1037,7 @@
       }catch(e){ deviceInfo = null; }
       const label = (deviceInfo && deviceInfo.name) ? `${deviceInfo.name} · ${liveEffects.length} fx` : `connected · ${liveEffects.length} fx`;
       setConnStatus(label, 'connected');
+      document.getElementById('btnLiveMirror').disabled = false;
       renderInspector();
     }catch(err){
       liveEffects = null; livePalettes = null;
@@ -1024,6 +1046,135 @@
     }
   }
   document.getElementById('btnConnect').addEventListener('click', connectController);
+
+  /* ============================ LIVE MIRROR ("PEEK") ============================ */
+  // Applies a WLED /json/state-shaped object (top-level bri/on + seg[]) onto
+  // our runs, matched to device segments by array order. Colors/effect/speed
+  // etc. are read straight off the run object every animation frame, so the
+  // canvas reflects this immediately — no re-render needed for the visuals.
+  function applyLiveState(state){
+    if(!state) return;
+    if(typeof state.on === 'boolean') liveOn = state.on;
+    if(typeof state.bri === 'number'){
+      masterBrightness = state.bri;
+      const slider = document.getElementById('masterBrightness');
+      if(slider) slider.value = masterBrightness;
+    }
+    const segs = Array.isArray(state.seg) ? state.seg : [];
+    const n = Math.min(segs.length, runs.length);
+    liveMirroredCount = n;
+    for(let i=0;i<n;i++){
+      const seg = segs[i], run = runs[i];
+      if(!seg || !run) continue;
+      if(typeof seg.fx === 'number'){
+        const val = liveEffects ? 'live_'+seg.fx : 'wled_'+seg.fx;
+        run.effect = val;
+        run.effectLabel = resolveEffectLabel(val);
+        run.simKey = resolveSimKeyFromValue(val);
+      }
+      if(typeof seg.pal === 'number') run.paletteId = seg.pal;
+      if(typeof seg.sx === 'number') run.speed = seg.sx;
+      if(typeof seg.ix === 'number') run.intensity = seg.ix;
+      if(Array.isArray(seg.col)){
+        if(seg.col[0]) run.color1 = rgbArrToHex(seg.col[0]);
+        if(seg.col[1]) run.color2 = rgbArrToHex(seg.col[1]);
+        if(seg.col[2]) run.color3 = rgbArrToHex(seg.col[2]);
+      }
+      if(typeof seg.grp === 'number') run.grouping = Math.max(1, seg.grp);
+      if(typeof seg.spc === 'number') run.spacing = Math.max(0, seg.spc);
+      if(typeof seg.mi === 'boolean') run.mirror = seg.mi;
+      if(typeof seg.rev === 'boolean') run.reverse = seg.rev;
+      if(typeof seg.bri === 'number') run.opacity = seg.bri/255;
+      run.visible = liveOn && seg.on !== false;
+    }
+    renderRunsList();
+    updateLiveBadge(segs.length);
+    // Don't steal focus from a field the user is actively editing.
+    const inspectorBody = document.getElementById('inspectorBody');
+    const focusedInsideInspector = inspectorBody && inspectorBody.contains(document.activeElement);
+    if(inspectorTab==='settings' && !focusedInsideInspector) renderInspector();
+  }
+
+  async function fetchLiveState(){
+    try{
+      const res = await fetch('http://'+controllerIp+'/json/state');
+      if(!res.ok) throw new Error('bad state response');
+      applyLiveState(await res.json());
+    }catch(err){
+      setConnStatus('live mirror lost connection', 'error');
+      stopLiveMirror();
+    }
+  }
+
+  function startLivePolling(){
+    stopLivePolling();
+    fetchLiveState();
+    livePollTimer = setInterval(fetchLiveState, 1000);
+  }
+  function stopLivePolling(){
+    if(livePollTimer){ clearInterval(livePollTimer); livePollTimer = null; }
+  }
+
+  function connectLiveSocket(){
+    try{
+      liveSocket = new WebSocket('ws://'+controllerIp+'/ws');
+    }catch(err){
+      startLivePolling();
+      return;
+    }
+    liveSocket.onopen = ()=>{ fetchLiveState(); };
+    liveSocket.onmessage = (ev)=>{
+      let data;
+      try{ data = JSON.parse(ev.data); }catch(err){ return; }
+      const state = (data && data.state) ? data.state : data;
+      if(state && (Array.isArray(state.seg) || typeof state.bri==='number')) applyLiveState(state);
+    };
+    liveSocket.onclose = ()=>{
+      liveSocket = null;
+      if(liveMirror && !livePollTimer) startLivePolling();
+    };
+    liveSocket.onerror = ()=>{
+      if(liveSocket) liveSocket.close();
+    };
+  }
+
+  function updateLiveBadge(segCount){
+    const badge = document.getElementById('liveBadge');
+    if(!badge) return;
+    if(liveMirror){
+      badge.style.display = 'inline';
+      badge.title = `Mirroring ${liveMirroredCount} of ${segCount||0} device segment(s) onto ${runs.length} run(s).`;
+    } else {
+      badge.style.display = 'none';
+    }
+  }
+
+  function startLiveMirror(){
+    if(!controllerIp) return;
+    liveMirror = true;
+    const btn = document.getElementById('btnLiveMirror');
+    if(btn) btn.textContent = 'Stop Live Mirror';
+    const slider = document.getElementById('masterBrightness');
+    if(slider) slider.disabled = true;
+    connectLiveSocket();
+    updateLiveBadge(0);
+  }
+
+  function stopLiveMirror(){
+    liveMirror = false;
+    liveMirroredCount = 0;
+    const btn = document.getElementById('btnLiveMirror');
+    if(btn) btn.textContent = 'Live Mirror';
+    const slider = document.getElementById('masterBrightness');
+    if(slider) slider.disabled = false;
+    if(liveSocket){ liveSocket.onclose = null; liveSocket.close(); liveSocket = null; }
+    stopLivePolling();
+    updateLiveBadge(0);
+  }
+
+  document.getElementById('btnLiveMirror').addEventListener('click', ()=>{
+    if(liveMirror) stopLiveMirror(); else startLiveMirror();
+  });
 
   document.getElementById('masterBrightness').addEventListener('input', e=>{ masterBrightness=parseInt(e.target.value); });
 
