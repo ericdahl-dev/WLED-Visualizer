@@ -3,30 +3,16 @@ import assert from 'node:assert';
 
 import { EFFECT_RENDERERS, computeEffectColor } from '../html/effects.js';
 
-// The same helper set index.html hands to the renderers.
+// The real helpers the app ships — not copies. getPaletteStops stays a stub
+// because it reads app palette state; these tests use content colours.
+import { clamp, lerpRgb, hexToRgb, hsl2rgb, hash01 } from '../html/color.js';
+
 const helpers = {
-  clamp: (v, lo, hi) => Math.min(hi, Math.max(lo, v)),
-  lerpRgb: (a, b, f) => [
-    a[0] + (b[0] - a[0]) * f,
-    a[1] + (b[1] - a[1]) * f,
-    a[2] + (b[2] - a[2]) * f,
-  ],
-  hexToRgb: (hex) => {
-    const h = hex.replace('#', '');
-    return [parseInt(h.slice(0, 2), 16), parseInt(h.slice(2, 4), 16), parseInt(h.slice(4, 6), 16)];
-  },
-  hsl2rgb: (h, s, l) => {
-    const c = (1 - Math.abs(2 * l - 1)) * s;
-    const x = c * (1 - Math.abs(((h / 60) % 2) - 1));
-    const m = l - c / 2;
-    const [r, g, b] = h < 60 ? [c, x, 0] : h < 120 ? [x, c, 0] : h < 180 ? [0, c, x]
-      : h < 240 ? [0, x, c] : h < 300 ? [x, 0, c] : [c, 0, x];
-    return [(r + m) * 255, (g + m) * 255, (b + m) * 255];
-  },
-  hash01: (v) => {
-    const s = Math.sin(v) * 43758.5453;
-    return s - Math.floor(s);
-  },
+  clamp,
+  lerpRgb,
+  hexToRgb,
+  hsl2rgb,
+  hash01,
   getPaletteStops: () => null,
   sampleGradientStops: (stops, f) => [f * 255, f * 255, f * 255],
 };

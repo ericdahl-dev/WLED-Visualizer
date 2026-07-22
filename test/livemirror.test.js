@@ -7,6 +7,7 @@ import {
   isFrameFresh,
   applyDeviceState,
 } from '../html/livemirror.js';
+import { rgbArrToHex } from '../html/color.js';
 
 // Build a WLED live-view frame: 'L', format byte, then one colour per LED.
 function frameOf(colours, format = 1) {
@@ -107,7 +108,7 @@ test('has no fresh frame before the first one arrives', () => {
 function helpers() {
   return {
     effectValue: (fx) => ({ effect: 'wled_' + fx, effectLabel: 'Effect ' + fx, simKey: 'chase' }),
-    rgbToHex: ([r, g, b]) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join(''),
+    rgbToHex: rgbArrToHex,
   };
 }
 
