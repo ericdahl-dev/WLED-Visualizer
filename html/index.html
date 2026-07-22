@@ -108,10 +108,6 @@
   let photoImg = null;
   let photoDataUrl = null;
 
-  let controllerIp = '';
-  let liveEffects = null;   // array of effect names from the live device, index = fx id
-  let livePalettes = null;  // array of palette names from the live device, index = pal id
-  let deviceInfo = null;
   let inspectorTab = 'settings'; // 'settings' | 'device'
 
   // Live Mirror ("Peek"): when on, runs are continuously synced from the
@@ -119,14 +115,25 @@
   // intensity, grouping/spacing, on/off, brightness) instead of being edited
   // by hand. Runs are matched to device segments by array order/index.
   let liveMirror = false;
-  // All device transport lives behind the controller client (controller.js).
-  const controller = createController();
+  // The controllers model: each entry owns its transport client and the
+  // device tables that used to be singletons. Slice 1 of issue #6 — exactly
+  // one entry exists, created at boot, so behavior is identical to before.
+  const controllers = [];
+  let activeControllerId = null;
+  function newControllerEntry(name, ip){
+    return { id: uid(), name: name, ip: ip||'', client: createController(),
+             effects: null, palettes: null, info: null, segments: [], connected: false };
+  }
+  function activeController(){
+    return controllers.find(c=>c.id===activeControllerId) || controllers[0];
+  }
+  // A run's owning controller; falls back to the active one for unstamped runs.
+  function controllerOf(run){
+    return (run && run.controllerId && controllers.find(c=>c.id===run.controllerId)) || activeController();
+  }
   let liveOn = true;          // device's global on/off state, while mirroring
   let liveMirroredCount = 0;  // how many runs (from index 0) are currently mirrored
   let liveSegCount = 0;       // segments the device last reported, for the badge
-  // Segment geometry ({start, len}) from the connected device, so new runs can
-  // line up with the hardware instead of guessing.
-  let deviceSegments = [];
 
   // Pixel-exact mirroring: WLED's websocket "live view" (the same feed its own
   // Peek uses) pushes the real post-brightness LED buffer as binary frames —
@@ -174,7 +181,7 @@
     // than a fixed length that matches no hardware.
     const geometry = newRunGeometry({
       stripLen: deviceStripLength(),
-      segments: deviceSegments,
+      segments: activeController().segments,
       runIndex: runs.length,
       previousEnd: previousEnd,
     });
@@ -182,6 +189,7 @@
     const color1 = palette[runs.length % palette.length];
     return {
       id: uid(),
+      controllerId: activeController().id,
       name: 'Run ' + (runs.length+1),
       points: [],
       ledCount: geometry.ledCount,
@@ -233,7 +241,7 @@
   // Thin wrappers over the effect-ref codec in effects.js — the string
   // convention is parsed there and nowhere else.
   function effectRefCtx(){
-    return { liveNames: liveEffects, guessSim: guessSimEffect };
+    return { liveNames: activeController().effects, guessSim: guessSimEffect };
   }
   function resolveSimKeyFromValue(val){
     return resolveEffectRef(parseEffectValue(val), effectRefCtx()).simKey;
@@ -281,8 +289,8 @@
     if(run.paletteId===undefined || run.paletteId===null) return null;
     const real = WLED_PALETTES_BY_ID[run.paletteId];
     if(real && real.stops) return real.stops;
-    if(livePalettes && livePalettes[run.paletteId]){
-      const name = livePalettes[run.paletteId].toLowerCase();
+    if(activeController().palettes && activeController().palettes[run.paletteId]){
+      const name = activeController().palettes[run.paletteId].toLowerCase();
       const match = WLED_PALETTES_REAL.find(p=>p.name.toLowerCase().replace(/^\*\s*/,'')===name.replace(/^\*\s*/,''));
       if(match && match.stops) return match.stops;
     }
@@ -715,13 +723,13 @@
     el.innerHTML = `
       <div class="tab-bar">
         <button class="tab-btn ${inspectorTab==='settings'?'active':''}" id="tabSettings">Run Settings</button>
-        <button class="tab-btn ${inspectorTab==='device'?'active':''}" id="tabDevice" ${controllerIp?'':'disabled'} title="${controllerIp?'':'Connect to a controller first'}">Device UI</button>
+        <button class="tab-btn ${inspectorTab==='device'?'active':''}" id="tabDevice" ${activeController().ip?'':'disabled'} title="${activeController().ip?'':'Connect to a controller first'}">Device UI</button>
       </div>
       <div id="inspectorBody"></div>
     `;
     document.getElementById('tabSettings').addEventListener('click', ()=>{ inspectorTab='settings'; renderInspector(); });
     const tabDeviceBtn = document.getElementById('tabDevice');
-    if(controllerIp) tabDeviceBtn.addEventListener('click', ()=>{ inspectorTab='device'; renderInspector(); });
+    if(activeController().ip) tabDeviceBtn.addEventListener('click', ()=>{ inspectorTab='device'; renderInspector(); });
 
     const body = document.getElementById('inspectorBody');
 
@@ -733,16 +741,16 @@
   }
 
   function renderDeviceTab(body){
-    if(!controllerIp){
+    if(!activeController().ip){
       body.innerHTML = '<div class="inspector-empty">Connect to a controller in the header first.</div>';
       return;
     }
     body.innerHTML = `
       <div class="hint" style="line-height:1.6;margin:0 2px 10px;">
-        ${controllerIp}'s own web interface, loaded directly. Changes made here control the real lights immediately and are separate from your saved layout.
-        <br><a href="http://${controllerIp}/" target="_blank" style="color:var(--accent);">Open in a new tab instead &rarr;</a>
+        ${activeController().ip}'s own web interface, loaded directly. Changes made here control the real lights immediately and are separate from your saved layout.
+        <br><a href="http://${activeController().ip}/" target="_blank" style="color:var(--accent);">Open in a new tab instead &rarr;</a>
       </div>
-      <iframe id="deviceFrame" src="http://${controllerIp}/" title="WLED device interface"
+      <iframe id="deviceFrame" src="http://${activeController().ip}/" title="WLED device interface"
         style="width:100%;height:60vh;border:1px solid var(--border);border-radius:8px;background:#fff;"></iframe>
       <div class="hint" style="margin-top:8px;">If this stays blank: a secure (https) page is likely blocking a plain http:// device (mixed content). Use "open in a new tab", or download this file and open it directly in your browser.</div>
     `;
@@ -768,13 +776,13 @@
     const isMirrored = liveMirror && runIdx>=0 && runIdx<liveMirroredCount;
     // Reported, never applied automatically: ledCount is layout the user drew
     // and it feeds the exported segment bounds.
-    const geoMismatch = runIdx>=0 ? geometryMismatch(run, deviceSegments[runIdx]) : null;
+    const geoMismatch = runIdx>=0 ? geometryMismatch(run, controllerOf(run).segments[runIdx]) : null;
     // Overlaps are derived fresh each render — chaining is only a guess made
     // at add time, and resize/delete silently invalidate it.
     const layoutOverlaps = runIdx>=0 ? stripLayout(runs).overlaps.filter(o=>o.runs.includes(runIdx)) : [];
 
     el.innerHTML = `
-      ${isMirrored ? `<div class="hint" style="background:rgba(94,234,212,0.08);border:1px solid rgba(94,234,212,0.3);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:var(--accent);text-transform:none;letter-spacing:0;">&#9679; Live-mirrored from ${controllerIp} — effect, palette, colors, speed/intensity and segment options update automatically here and will be overwritten by the device on the next update.</div>` : ''}
+      ${isMirrored ? `<div class="hint" style="background:rgba(94,234,212,0.08);border:1px solid rgba(94,234,212,0.3);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:var(--accent);text-transform:none;letter-spacing:0;">&#9679; Live-mirrored from ${activeController().ip} — effect, palette, colors, speed/intensity and segment options update automatically here and will be overwritten by the device on the next update.</div>` : ''}
       <div class="field">
         <label>Name</label>
         <input type="text" id="f_name" value="${run.name.replace(/"/g,'&quot;')}">
@@ -823,21 +831,21 @@
       </div>
 
       <div class="field">
-        <label>Effect ${liveEffects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live from '+controllerIp+'</span>' : '<span style="color:var(--text-faint);text-transform:none;letter-spacing:0;">&middot; WLED effect library</span>'}</label>
+        <label>Effect ${activeController().effects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live from '+activeController().ip+'</span>' : '<span style="color:var(--text-faint);text-transform:none;letter-spacing:0;">&middot; WLED effect library</span>'}</label>
         <select id="f_effect">
-          ${ liveEffects
-              ? liveEffects.map((name,idx)=>`<option value="live_${idx}" ${run.effect==='live_'+idx?'selected':''}>${name}</option>`).join('')
+          ${ activeController().effects
+              ? activeController().effects.map((name,idx)=>`<option value="live_${idx}" ${run.effect==='live_'+idx?'selected':''}>${name}</option>`).join('')
               : WLED_EFFECTS_REAL.map(fx=>`<option value="wled_${fx.id}" title="${fx.desc.replace(/"/g,'&quot;')}" ${run.effect==='wled_'+fx.id?'selected':''}>${fx.name}</option>`).join('')
           }
         </select>
-        <div class="hint">${liveEffects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} ${isMirrored && livePixelsFresh() ? 'Canvas is painting this run&rsquo;s real LED colours from the device.' : 'Canvas preview approximates the look.'}</div>
+        <div class="hint">${activeController().effects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} ${isMirrored && livePixelsFresh() ? 'Canvas is painting this run&rsquo;s real LED colours from the device.' : 'Canvas preview approximates the look.'}</div>
       </div>
 
       <div class="field">
-        <label>Palette ${liveEffects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live</span>' : ''}</label>
+        <label>Palette ${activeController().effects ? '<span style="color:var(--accent);text-transform:none;letter-spacing:0;">&middot; live</span>' : ''}</label>
         <select id="f_palette">
-          ${ (liveEffects && livePalettes)
-              ? livePalettes.map((name,idx)=>`<option value="${idx}" ${run.paletteId===idx?'selected':''}>${name}</option>`).join('')
+          ${ (activeController().effects && activeController().palettes)
+              ? activeController().palettes.map((name,idx)=>`<option value="${idx}" ${run.paletteId===idx?'selected':''}>${name}</option>`).join('')
               : WLED_PALETTES_REAL.map(p=>`<option value="${p.id}" title="${p.desc.replace(/"/g,'&quot;')}" ${run.paletteId===p.id?'selected':''}>${p.name}</option>`).join('')
           }
         </select>
@@ -944,7 +952,7 @@
 
     const adoptBtn = document.getElementById('f_adoptgeo');
     if(adoptBtn) adoptBtn.addEventListener('click', ()=>{
-      const target = geometryMismatch(run, deviceSegments[runIdx]);
+      const target = geometryMismatch(run, controllerOf(run).segments[runIdx]);
       if(!target) return;
       commit(()=>{
         run.startIndex = target.startIndex;
@@ -1009,7 +1017,7 @@
   });
 
   function deviceStripLength(){
-    return (deviceInfo && deviceInfo.leds && deviceInfo.leds.count) || 0;
+    return (activeController().info && activeController().info.leds && activeController().info.leds.count) || 0;
   }
 
   function setConnStatus(text, state){
@@ -1024,22 +1032,25 @@
     stopLiveMirror();
     document.getElementById('btnLiveMirror').disabled = true;
     document.getElementById('btnImportDevice').disabled = true;
-    controllerIp = ip;
+    const entry = activeController();
+    entry.ip = ip;
+    entry.connected = false;
     setConnStatus('connecting…','connecting');
     try{
-      const dev = await controller.connect(ip);
-      liveEffects = dev.effects;
-      livePalettes = dev.palettes;
-      deviceInfo = dev.info;
+      const dev = await entry.client.connect(ip);
+      entry.effects = dev.effects;
+      entry.palettes = dev.palettes;
+      entry.info = dev.info;
       // Segment bounds seed the geometry of runs drawn from here on.
-      deviceSegments = dev.segments;
-      const label = (deviceInfo && deviceInfo.name) ? `${deviceInfo.name} · ${liveEffects.length} fx` : `connected · ${liveEffects.length} fx`;
+      entry.segments = dev.segments;
+      entry.connected = true;
+      const label = (activeController().info && activeController().info.name) ? `${activeController().info.name} · ${activeController().effects.length} fx` : `connected · ${activeController().effects.length} fx`;
       setConnStatus(label, 'connected');
       document.getElementById('btnLiveMirror').disabled = false;
       document.getElementById('btnImportDevice').disabled = false;
       renderInspector();
     }catch(err){
-      liveEffects = null; livePalettes = null;
+      activeController().effects = null; activeController().palettes = null;
       setConnStatus('failed — check IP, or open this file directly in your browser', 'error');
       renderInspector();
     }
@@ -1057,7 +1068,7 @@
   function deviceStateHelpers(){
     return {
       effectValue: (fx)=>{
-        const ref = { kind: liveEffects ? 'live' : 'wled', id: fx };
+        const ref = { kind: activeController().effects ? 'live' : 'wled', id: fx };
         const r = resolveEffectRef(ref, effectRefCtx());
         return { effect: r.value, effectLabel: r.label, simKey: r.simKey };
       },
@@ -1069,15 +1080,15 @@
   // effect, palette and colours already set. Additive: runs already drawn keep
   // their paths, which the controller knows nothing about.
   async function importRunsFromDevice(){
-    if(!controllerIp) return;
+    if(!activeController().ip) return;
     let state;
     try{
-      state = await controller.getState();
+      state = await activeController().client.getState();
     }catch(err){
       setConnStatus('import failed — device unreachable', 'error');
       return;
     }
-    deviceSegments = deviceSegmentsOf(state);
+    activeController().segments = deviceSegmentsOf(state);
     const result = importRuns(state, runs, {
       createRun: defaultRun,
       helpers: deviceStateHelpers(),
@@ -1125,7 +1136,7 @@
   // when there's no usable frame (caller then falls back to the simulation).
   function livePixelColor(deviceIdx){
     if(!livePixelsFresh()) return null;
-    const stripLen = (deviceInfo && deviceInfo.leds && deviceInfo.leds.count) || liveFrame.count;
+    const stripLen = (activeController().info && activeController().info.leds && activeController().info.leds.count) || liveFrame.count;
     return liveFrameColor(liveFrame, deviceIdx, stripLen);
   }
 
@@ -1144,13 +1155,13 @@
   }
 
   function startLiveMirror(){
-    if(!controllerIp) return;
+    if(!activeController().ip) return;
     liveMirror = true;
     const btn = document.getElementById('btnLiveMirror');
     if(btn) btn.textContent = 'Stop Live Mirror';
     const slider = document.getElementById('masterBrightness');
     if(slider) slider.disabled = true;
-    controller.openLiveFeed({
+    activeController().client.openLiveFeed({
       onState: applyLiveState,
       onFrame: applyLivePixels,
       onLost: ()=>{
@@ -1169,7 +1180,7 @@
     const slider = document.getElementById('masterBrightness');
     if(slider) slider.disabled = false;
     // The client sends the stop handshake and kills socket + polling.
-    controller.closeLiveFeed();
+    activeController().client.closeLiveFeed();
     liveFrame = null; livePixelsAt = null;
     // Also drops the "live-mirrored" banner, which otherwise kept warning that
     // the device would overwrite fields after mirroring had stopped.
@@ -1202,17 +1213,21 @@
     return WLED_FX_ID[run.effect] !== undefined ? WLED_FX_ID[run.effect] : null;
   }
 
+  function exportableControllers(){
+    return controllers.map(c=>({id: c.id, name: c.name, ip: c.ip}));
+  }
   function buildExport(includePhoto){
     const payload = {
       meta: {
         app: 'WLED Visualization Studio',
         exportedAt: new Date().toISOString(),
-        connectedController: liveEffects ? controllerIp : null,
-        note: liveEffects
+        connectedController: activeController().effects ? activeController().ip : null,
+        note: activeController().effects
           ? "Effect/palette ids for runs using a live effect were read directly from your controller's own /json/eff & /json/pal lists and should be exact for that device. Other runs use this app's embedded real WLED effect/palette reference (core set, ids 0-117 effects / 0-71 palettes), sourced from WLED's own documentation — accurate for standard firmware, but confirm against GET /json/eff if you're on a heavily customized build."
           : "Effect/palette ids are drawn from this app's embedded real WLED reference (core set, ids 0-117 effects / 0-71 palettes), sourced from WLED's own documentation. Accurate for standard firmware. Connect to your controller in the header for an exact match to your specific build, especially for newer 2D/audio-reactive effects beyond id 117."
       },
       masterBrightness: masterBrightness,
+      controllers: exportableControllers(),
       canvas: getCanvasSize(),
       photo: includePhoto ? photoDataUrl : null,
       runs: runs.map(r=>({
@@ -1223,6 +1238,7 @@
         lengthUnit: r.lengthUnit,
         lengthMeters: +lengthInMeters(r).toFixed(4),
         ledCount: r.ledCount,
+        controllerId: r.controllerId,
         densityPerMeter: +densityPerM(r).toFixed(2),
         startIndex: r.startIndex,
         reverse: r.reverse,
@@ -1230,7 +1246,7 @@
         effect: r.effectLabel || r.effect,
         wledEffectId: resolveWledFxId(r),
         paletteId: r.paletteId,
-        paletteName: (livePalettes && livePalettes[r.paletteId]) || (WLED_PALETTES_BY_ID[r.paletteId] ? WLED_PALETTES_BY_ID[r.paletteId].name : null),
+        paletteName: (activeController().palettes && activeController().palettes[r.paletteId]) || (WLED_PALETTES_BY_ID[r.paletteId] ? WLED_PALETTES_BY_ID[r.paletteId].name : null),
         grouping: r.grouping,
         spacing: r.spacing,
         mirror: r.mirror,
@@ -1288,10 +1304,17 @@
     reader.onload = (ev)=>{
       try{
         const data = JSON.parse(ev.target.result);
-        runs = (data.runs||[]).map(r=>{
+        // Legacy projects have no controllers key; migration synthesizes one
+        // and stamps every run (tested in controller.js).
+        const migrated = migrateProjectControllers(data, uid);
+        controllers.length = 0;
+        migrated.controllers.forEach(c=>controllers.push(Object.assign(newControllerEntry(c.name, c.ip), {id: c.id})));
+        activeControllerId = controllers[0].id;
+        runs = (migrated.runs||[]).map(r=>{
           const resolved = resolveImportedEffect(r);
           return {
             id: uid(),
+            controllerId: r.controllerId,
             name: r.name || 'Run',
             points: r.points || [],
             ledCount: r.ledCount || 30,
@@ -1341,6 +1364,10 @@
     getInspectorTab: ()=>inspectorTab,
     getInspectorBody: ()=>document.getElementById('inspectorBody'),
   });
+
+  // Boot with one controller (slice 1: exactly one ever exists).
+  controllers.push(newControllerEntry('Controller 1', ''));
+  activeControllerId = controllers[0].id;
 
   /* ============================ INIT ============================ */
   resizeCanvas();

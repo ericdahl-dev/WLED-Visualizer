@@ -141,3 +141,42 @@ test('closing the feed sends the stop handshake and stops everything', async () 
   assert.strictEqual(ws.readyState, 3, 'socket left open');
   assert.strictEqual(t.active(), 0, 'polling left running');
 });
+
+import { migrateProjectControllers } from '../html/controller.js';
+
+// Projects saved before multi-controller support have no controllers key.
+// Import synthesizes one and stamps every run — zero loss, no version field;
+// the presence of controllers/controllerId is the discriminator.
+test('a legacy project gets one synthesized controller owning every run', () => {
+  const data = {
+    meta: { connectedController: '192.168.2.27' },
+    runs: [{ name: 'Porch' }, { name: 'Roof' }],
+  };
+
+  const out = migrateProjectControllers(data, () => 'ctrl_1');
+
+  assert.deepStrictEqual(out.controllers, [{ id: 'ctrl_1', name: 'Controller 1', ip: '192.168.2.27' }]);
+  assert.ok(out.runs.every((r) => r.controllerId === 'ctrl_1'));
+});
+
+test('a legacy project with no recorded ip synthesizes an empty one', () => {
+  const out = migrateProjectControllers({ runs: [{}] }, () => 'c');
+
+  assert.strictEqual(out.controllers[0].ip, '');
+});
+
+// Modern projects pass through; stray runs without an owner are stamped with
+// the first controller rather than left dangling.
+test('a modern project is preserved, unowned runs adopted by the first controller', () => {
+  const data = {
+    controllers: [{ id: 'a', name: 'Roofline', ip: '10.0.0.1' }, { id: 'b', name: 'Porch', ip: '10.0.0.2' }],
+    runs: [{ controllerId: 'b' }, {}],
+  };
+
+  const out = migrateProjectControllers(data, () => 'never');
+
+  assert.strictEqual(out.controllers.length, 2);
+  assert.strictEqual(out.controllers[0].name, 'Roofline');
+  assert.strictEqual(out.runs[0].controllerId, 'b');
+  assert.strictEqual(out.runs[1].controllerId, 'a');
+});
