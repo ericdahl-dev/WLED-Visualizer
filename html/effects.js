@@ -23,6 +23,11 @@ const EFFECTS = [
   {id:'multiComet',    label:'Multi Comet',      params:['speed','intensity','color','color2']},
   {id:'loading',       label:'Loading',          params:['speed','intensity','color','color2']},
   {id:'stream',        label:'Stream',           params:['speed','intensity']},
+  {id:'android',       label:'Android',          params:['speed','intensity','color','color2']},
+  {id:'chaseRandom',   label:'Chase Random',     params:['speed','intensity']},
+  {id:'chaseRainbow',  label:'Chase Rainbow',    params:['speed','intensity']},
+  {id:'chaseFlash',    label:'Chase Flash',      params:['speed','color']},
+  {id:'rainbowRunner', label:'Rainbow Runner',   params:['speed','intensity']},
 ];
 const EFFECT_MAP = Object.fromEntries(EFFECTS.map(e => [e.id, e]));
 
@@ -75,13 +80,13 @@ const WLED_EFFECTS_REAL = [
   {id:24,name:'Strobe Rainbow',sim:'blink',desc:'Strobe cycling through a rainbow.'},
   {id:25,name:'Strobe Mega',sim:'blink',desc:'Bigger, brighter strobe flashes.'},
   {id:26,name:'Blink Rainbow',sim:'blink',desc:'Blink cycling through a rainbow.'},
-  {id:27,name:'Android',sim:'chase',desc:'A block of light moves along, changing size.'},
+  {id:27,name:'Android',sim:'android',desc:'A block of light moves along, changing size.'},
   {id:28,name:'Chase',sim:'chase',desc:'A block of color chases along the strip.'},
-  {id:29,name:'Chase Random',sim:'chase',desc:'Chase using random colors.'},
-  {id:30,name:'Chase Rainbow',sim:'chase',desc:'Chase cycling through a rainbow.'},
-  {id:31,name:'Chase Flash',sim:'chase',desc:'Chase with a white flash.'},
-  {id:32,name:'Chase Flash Rnd',sim:'chase',desc:'Chase Flash with random colors.'},
-  {id:33,name:'Rainbow Runner',sim:'chase',desc:'A rainbow dot runs along the strip.'},
+  {id:29,name:'Chase Random',sim:'chaseRandom',desc:'Chase using random colors.'},
+  {id:30,name:'Chase Rainbow',sim:'chaseRainbow',desc:'Chase cycling through a rainbow.'},
+  {id:31,name:'Chase Flash',sim:'chaseFlash',desc:'Chase with a white flash.'},
+  {id:32,name:'Chase Flash Rnd',sim:'chaseFlash',desc:'Chase Flash with random colors.'},
+  {id:33,name:'Rainbow Runner',sim:'rainbowRunner',desc:'A rainbow dot runs along the strip.'},
   {id:34,name:'Colorful',sim:'colorloop',desc:'Shifting mix of colors.'},
   {id:35,name:'Traffic Light',sim:'blink',desc:'Simulates a traffic light sequence.'},
   {id:36,name:'Sweep Random',sim:'wipe',desc:'Sweep effect with random colors.'},
@@ -373,6 +378,62 @@ const EFFECT_RENDERERS = {
     const shift = Math.floor(t * speedFactor * 4);
     const zone = Math.floor((i + shift) / zoneSize);
     return helpers.hsl2rgb(helpers.hash01(zone * 2.7183) * 360, 0.9, 0.5);
+  },
+  // FX.cpp mode_android: one block, growing in place then shrinking while its
+  // start advances. Approximated with a triangle-wave size and drifting start.
+  android: ({c1, c2, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const maxSize = 0.08 + intensityFrac * 0.4;
+    const phase = (t * speedFactor * 0.25) % 2;
+    const size = Math.max(0.03, maxSize * (phase < 1 ? phase : 2 - phase));
+    const start = (t * speedFactor * 0.15) % 1;
+    let d = frac - start;
+    if (d < 0) d += 1;
+    return d < size ? c1 : c2;
+  },
+  // FX.cpp chase(): marching bands over a background; Chase Random re-rolls
+  // the background hue each lap.
+  chaseRandom: ({i, n, t, speedFactor, frac, intensityFrac, helpers}) => {
+    const lap = Math.floor(t * speedFactor * 0.5);
+    const bg = helpers.hsl2rgb(helpers.hash01(lap * 7.77) * 360, 0.85, 0.5);
+    const size = 0.02 + intensityFrac * 0.15;
+    const a = (t * speedFactor * 0.5) % 1;
+    let d = frac - a;
+    if (d < 0) d += 1;
+    if (d < size) return [255, 255, 255];
+    if (d < size * 2) return [0, 0, 0];
+    return bg;
+  },
+  // Chase Rainbow: same bands, background hue cycling continuously.
+  chaseRainbow: ({t, speedFactor, frac, intensityFrac, helpers}) => {
+    const bg = helpers.hsl2rgb((t * speedFactor * 40) % 360, 0.85, 0.5);
+    const size = 0.02 + intensityFrac * 0.15;
+    const a = (t * speedFactor * 0.5) % 1;
+    let d = frac - a;
+    if (d < 0) d += 1;
+    if (d < size) return [255, 255, 255];
+    if (d < size * 2) return [0, 0, 0];
+    return bg;
+  },
+  // FX.cpp mode_chase_flash: background, plus a two-LED white flash blinking
+  // a few times at one position before it advances.
+  chaseFlash: ({c1, n, t, speedFactor, frac, helpers}) => {
+    const step = Math.floor(t * speedFactor * 6);
+    const pos = (helpers.hash01(Math.floor(step / 8) * 3.33) + Math.floor(step / 8) * 0.13) % 1;
+    const flashing = (step % 2 === 0) && (step % 8) < 6;
+    let d = Math.abs(frac - pos);
+    d = Math.min(d, 1 - d);
+    if (flashing && d < 1.5 / Math.max(2, n)) return [255, 255, 255];
+    return c1;
+  },
+  // FX.cpp mode_chase_rainbow_white ("Rainbow Runner"): the background is a
+  // rainbow along the strip; the chase bands run over it.
+  rainbowRunner: ({t, speedFactor, frac, intensityFrac, helpers}) => {
+    const size = 0.02 + intensityFrac * 0.15;
+    const a = (t * speedFactor * 0.5) % 1;
+    let d = frac - a;
+    if (d < 0) d += 1;
+    if (d < size) return [255, 255, 255];
+    return helpers.hsl2rgb((frac * 360 + t * speedFactor * 30) % 360, 0.85, 0.5);
   },
   noise: ({c1, c2, c3, i, t, speedFactor, paletteStops, helpers}) => {
     const val = 0.5 + 0.5 * (

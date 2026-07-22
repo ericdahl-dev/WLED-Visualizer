@@ -201,3 +201,75 @@ test('mirrored groups reflect about the segment centre', () => {
     [0, 1, 2, 1, 0]
   );
 });
+
+// FX.cpp: Android is one contiguous block that grows in place, then shrinks
+// while advancing — the size oscillation is what makes it Android.
+test('android is one block whose size breathes over time', () => {
+  assert.ok(EFFECT_RENDERERS.android, 'no android renderer');
+
+  const sizes = [1, 3, 5, 7].map((t) => strip('android', 60, t).filter((c) => lum(c) > 60).length);
+
+  assert.ok(sizes.every((n) => n > 0 && n < 60), `block missing or full-strip: ${sizes}`);
+  assert.ok(new Set(sizes).size > 1, `size never changes: ${sizes}`);
+  assert.strictEqual(clusters(strip('android', 60, 3), 60), 1, 'not contiguous');
+});
+
+// FX.cpp chase(): Chase Random picks a new wheel colour each lap — the
+// background hue changes, the marching bands stay.
+test('chase random changes its background colour between laps', () => {
+  assert.ok(EFFECT_RENDERERS.chaseRandom, 'no chaseRandom renderer');
+
+  const bgAt = (t) => {
+    const leds = strip('chaseRandom', 60, t);
+    const counts = {};
+    for (const c of leds) { const k = c.map(Math.round).join(','); counts[k] = (counts[k] || 0) + 1; }
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; // dominant colour
+  };
+
+  assert.notStrictEqual(bgAt(1), bgAt(40), 'background never changes');
+});
+
+// Chase Rainbow: same chase, background hue cycling continuously.
+test('chase rainbow cycles its background hue', () => {
+  assert.ok(EFFECT_RENDERERS.chaseRainbow, 'no chaseRainbow renderer');
+
+  const domAt = (t) => {
+    const counts = {};
+    for (const c of strip('chaseRainbow', 60, t)) { const k = c.map(Math.round).join(','); counts[k] = (counts[k] || 0) + 1; }
+    const dom = Object.entries(counts).sort((a, b) => b[1] - a[1])[0];
+    return { key: dom[0], lum: dom[0].split(',').reduce((s, v) => s + +v, 0) };
+  };
+
+  const a = domAt(1), b = domAt(4);
+  assert.ok(a.lum > 60 && b.lum > 60, 'background dark');
+  assert.notStrictEqual(a.key, b.key, 'hue never moves');
+});
+
+// FX.cpp mode_chase_flash: background everywhere, and a two-LED white flash
+// that blinks a few times at one spot before moving on.
+test('chase flash is background plus an intermittent white pair', () => {
+  assert.ok(EFFECT_RENDERERS.chaseFlash, 'no chaseFlash renderer');
+
+  let flashSeen = 0, quietSeen = 0;
+  for (let t = 0; t < 6; t += 0.1) {
+    const white = strip('chaseFlash', 60, t).filter(([r, g, b]) => r > 200 && g > 200 && b > 200).length;
+    if (white > 0 && white <= 6) flashSeen++;
+    if (white === 0) quietSeen++;
+  }
+  assert.ok(flashSeen > 0, 'never flashes');
+  assert.ok(quietSeen > 0, 'flash never turns off');
+});
+
+// Rainbow Runner (mode_chase_rainbow_white): the background itself is a
+// rainbow along the strip, with the chase bands running over it.
+test('rainbow runner carries many hues at a single instant', () => {
+  assert.ok(EFFECT_RENDERERS.rainbowRunner, 'no rainbowRunner renderer');
+
+  const hues = new Set(
+    strip('rainbowRunner', 60, 2)
+      .filter((c) => lum(c) > 100)
+      .map(([r, g, b]) => Math.round(Math.atan2(Math.sqrt(3) * (g - b), 2 * r - g - b) * 6 / Math.PI))
+  );
+
+  assert.ok(hues.size >= 5, `only ${hues.size} distinct hues — not a rainbow`);
+});
