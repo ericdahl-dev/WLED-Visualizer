@@ -107,6 +107,31 @@ function importRuns(state, runs, deps) {
   return { imported };
 }
 
+// What the runs collectively claim of the strip: each run's LED range, plus
+// any ranges claimed twice (overlaps) or not at all between runs (gaps).
+// Derived on demand and never written back — startIndex chaining is only a
+// guess made at add time, and reorder/delete/resize silently invalidate it,
+// so the truth has to be recomputed, reported, and left for the user to fix.
+function stripLayout(runs) {
+  const overlaps = [];
+  const gaps = [];
+  const ranges = runs.map((r, i) => ({ run: i, start: r.startIndex, end: r.startIndex + r.ledCount }));
+  const sorted = ranges.slice().sort((a, b) => a.start - b.start || a.end - b.end);
+  for (let i = 1; i < sorted.length; i++) {
+    const prev = sorted[i - 1], cur = sorted[i];
+    if (cur.start < prev.end) {
+      overlaps.push({
+        runs: [prev.run, cur.run].sort((a, b) => a - b),
+        start: cur.start,
+        count: Math.min(prev.end, cur.end) - cur.start,
+      });
+    } else if (cur.start > prev.end) {
+      gaps.push({ start: prev.end, count: cur.start - prev.end });
+    }
+  }
+  return { overlaps, gaps };
+}
+
 // How a run's geometry differs from the segment it mirrors, or null when they
 // agree. Deliberately reported rather than applied: ledCount is layout the
 // user drew and it feeds the exported segment bounds, so adopting it is their
@@ -144,6 +169,7 @@ if (typeof module !== 'undefined' && module.exports) {
     renderLiveBadge,
     newRunGeometry,
     geometryMismatch,
+    stripLayout,
     importRuns,
     LIVE_PIXEL_STALE_MS,
   };
