@@ -26,6 +26,10 @@
     </div>
 
     <div class="header-group" title="Fetches your device's real effect &amp; palette list. Works best when this file is opened directly in your browser rather than viewed inside a chat, since a secure (https) page may block requests to a local http:// device.">
+      <select id="controllerSelect" title="Which controller you're connecting, importing from and adding runs to." style="max-width:140px;background:var(--surface-raised);border:1px solid var(--border);color:var(--text-primary);padding:8px 6px;border-radius:8px;font-family:var(--font-mono);font-size:12px;"></select>
+      <button class="hbtn" id="btnAddController" title="Add another controller.">+</button>
+      <button class="hbtn" id="btnRenameController" title="Rename this controller.">&#9998;</button>
+      <button class="hbtn" id="btnDeleteController" title="Delete this controller (blocked while it owns runs).">&#10005;</button>
       <input type="text" id="controllerIp" placeholder="Controller IP" style="width:130px;background:var(--surface-raised);border:1px solid var(--border);color:var(--text-primary);padding:8px 9px;border-radius:8px;font-family:var(--font-mono);font-size:12px;">
       <button class="hbtn" id="btnConnect">Connect</button>
       <span id="connStatus" style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;">not connected</span>
@@ -175,8 +179,9 @@
   }
 
   function defaultRun(){
-    const prev = runs[runs.length-1];
-    const previousEnd = prev ? (prev.startIndex + prev.ledCount) : 0;
+    // Each controller is its own address space: chain from the last LED any
+    // of the ACTIVE controller's runs claim, not the globally last run.
+    const previousEnd = previousEndFor(runs, activeController().id);
     // A connected device knows its own geometry, so start from that rather
     // than a fixed length that matches no hardware.
     const geometry = newRunGeometry({
@@ -677,6 +682,7 @@
         </div>
         <div class="run-meta">
           <span>${run.ledCount} LEDs</span>
+          ${controllers.length>1 ? `<span style="color:var(--accent);">${controllerOf(run).name}</span>` : ''}
           <span>${run.lengthValue}${UNIT_LABEL[run.lengthUnit]}</span>
           <span>${run.effectLabel || (EFFECT_MAP[run.effect] ? EFFECT_MAP[run.effect].label : run.effect)}</span>
         </div>
@@ -779,7 +785,11 @@
     const geoMismatch = runIdx>=0 ? geometryMismatch(run, controllerOf(run).segments[runIdx]) : null;
     // Overlaps are derived fresh each render — chaining is only a guess made
     // at add time, and resize/delete silently invalidate it.
-    const layoutOverlaps = runIdx>=0 ? stripLayout(runs).overlaps.filter(o=>o.runs.includes(runIdx)) : [];
+    // Overlaps are per controller: each controller's strip is its own address
+    // space, so runs on different controllers can share indices legally.
+    const siblingRuns = runs.filter(r=>controllerOf(r)===controllerOf(run));
+    const siblingIdx = siblingRuns.indexOf(run);
+    const layoutOverlaps = siblingIdx>=0 ? stripLayout(siblingRuns).overlaps.filter(o=>o.runs.includes(siblingIdx)) : [];
 
     el.innerHTML = `
       ${isMirrored ? `<div class="hint" style="background:rgba(94,234,212,0.08);border:1px solid rgba(94,234,212,0.3);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:var(--accent);text-transform:none;letter-spacing:0;">&#9679; Live-mirrored from ${activeController().ip} — effect, palette, colors, speed/intensity and segment options update automatically here and will be overwritten by the device on the next update.</div>` : ''}
@@ -812,10 +822,17 @@
           <label>Controller Start Index</label>
           <input type="number" id="f_start" min="0" step="1" value="${run.startIndex}">
         </div>
+        ${controllers.length>1 ? `<div class="field">
+          <label>Controller</label>
+          <select id="f_controller">
+            ${controllers.map(c=>`<option value="${c.id}" ${controllerOf(run).id===c.id?'selected':''}>${c.name}</option>`).join('')}
+          </select>
+        </div>` : ''}
       </div>
+      ${run._reassignNotice ? `<div class="hint" style="background:rgba(255,195,113,0.08);border:1px solid rgba(255,195,113,0.35);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:#FFC371;text-transform:none;letter-spacing:0;">${run._reassignNotice}</div>` : ''}
 
       ${layoutOverlaps.length ? `<div class="hint" style="background:rgba(255,107,107,0.08);border:1px solid rgba(255,107,107,0.35);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:#FF6B6B;text-transform:none;letter-spacing:0;">
-        ${layoutOverlaps.map(o=>`This run and ${runs[o.runs[0]===runIdx?o.runs[1]:o.runs[0]].name} both claim LEDs ${o.start}&ndash;${o.start+o.count-1}.`).join('<br>')}
+        ${layoutOverlaps.map(o=>`This run and ${siblingRuns[o.runs[0]===siblingIdx?o.runs[1]:o.runs[0]].name} both claim LEDs ${o.start}&ndash;${o.start+o.count-1}.`).join('<br>')}
         The export will carry these overlapping segment bounds.
       </div>` : ''}
       ${geoMismatch ? `<div class="hint" style="background:rgba(255,195,113,0.08);border:1px solid rgba(255,195,113,0.35);border-radius:8px;padding:8px 10px;margin:0 0 10px;color:#FFC371;text-transform:none;letter-spacing:0;">
@@ -950,6 +967,24 @@
       });
     });
 
+    const ctlSel = document.getElementById('f_controller');
+    if(ctlSel) ctlSel.addEventListener('change', ()=>{
+      const target = controllers.find(c=>c.id===ctlSel.value);
+      if(!target) return;
+      commit(()=>{
+        run.controllerId = target.id;
+        // Keep the numeric effect id (stable across standard builds), re-label
+        // from the new controller's list, and say so when the name differs —
+        // a custom build could show a different effect at the same id.
+        const ref = parseEffectValue(run.effect);
+        const r = resolveEffectRef(ref, { liveNames: target.effects, guessSim: guessSimEffect });
+        run._reassignNotice = (run.effectLabel && r.label !== run.effectLabel && ref.kind !== 'sim')
+          ? `Effect id ${ref.id} is "${r.label}" on ${target.name}, not "${run.effectLabel}". The id was kept; verify it's the effect you want.`
+          : null;
+        run.effectLabel = r.label;
+        run.simKey = r.simKey;
+      });
+    });
     const adoptBtn = document.getElementById('f_adoptgeo');
     if(adoptBtn) adoptBtn.addEventListener('click', ()=>{
       const target = geometryMismatch(run, controllerOf(run).segments[runIdx]);
@@ -1044,6 +1079,7 @@
       // Segment bounds seed the geometry of runs drawn from here on.
       entry.segments = dev.segments;
       entry.connected = true;
+      renderControllerSelect();
       const label = (activeController().info && activeController().info.name) ? `${activeController().info.name} · ${activeController().effects.length} fx` : `connected · ${activeController().effects.length} fx`;
       setConnStatus(label, 'connected');
       document.getElementById('btnLiveMirror').disabled = false;
@@ -1365,12 +1401,71 @@
     getInspectorBody: ()=>document.getElementById('inspectorBody'),
   });
 
-  // Boot with one controller (slice 1: exactly one ever exists).
+  // Boot with one controller; more can be added from the header.
   controllers.push(newControllerEntry('Controller 1', ''));
   activeControllerId = controllers[0].id;
 
+  /* ===================== CONTROLLER SELECTOR (header) ===================== */
+  function renderControllerSelect(){
+    const sel = document.getElementById('controllerSelect');
+    if(!sel) return;
+    sel.innerHTML = controllers.map(c=>
+      `<option value="${c.id}" ${c.id===activeControllerId?'selected':''}>${c.connected?'●':'○'} ${c.name}</option>`).join('');
+    // Everything in the header reflects the active controller.
+    document.getElementById('controllerIp').value = activeController().ip || '';
+    const conn = activeController().connected;
+    document.getElementById('btnLiveMirror').disabled = !conn;
+    document.getElementById('btnImportDevice').disabled = !conn;
+    setConnStatus(conn
+      ? `${(activeController().info&&activeController().info.name)||activeController().name} · ${(activeController().effects||[]).length} fx`
+      : 'not connected', conn?'connected':'idle');
+  }
+  document.getElementById('controllerSelect').addEventListener('change', (e)=>{
+    stopLiveMirror();
+    activeControllerId = e.target.value;
+    renderControllerSelect();
+    commit(()=>{});
+  });
+  document.getElementById('btnAddController').addEventListener('click', ()=>{
+    stopLiveMirror();
+    const entry = newControllerEntry('Controller ' + (controllers.length+1), '');
+    controllers.push(entry);
+    activeControllerId = entry.id;
+    renderControllerSelect();
+    commit(()=>{});
+  });
+  document.getElementById('btnRenameController').addEventListener('click', ()=>{
+    // Inline rename: the select briefly becomes a text input. No dialogs.
+    const sel = document.getElementById('controllerSelect');
+    const entry = activeController();
+    const input = document.createElement('input');
+    input.type = 'text'; input.value = entry.name; input.id = 'controllerRename';
+    input.style.cssText = sel.style.cssText || 'max-width:140px;';
+    input.className = sel.className;
+    sel.replaceWith(input); input.focus(); input.select();
+    const done = (save)=>{
+      if(save && input.value.trim()) entry.name = input.value.trim();
+      input.replaceWith(sel);
+      renderControllerSelect();
+      commit(()=>{});
+    };
+    input.addEventListener('keydown', (e)=>{ if(e.key==='Enter') done(true); if(e.key==='Escape') done(false); });
+    input.addEventListener('blur', ()=>done(true));
+  });
+  document.getElementById('btnDeleteController').addEventListener('click', ()=>{
+    const verdict = canDeleteController(runs, activeControllerId, controllers.length);
+    if(!verdict.ok){ setConnStatus('cannot delete — ' + verdict.reason, 'error'); return; }
+    stopLiveMirror();
+    const idx = controllers.findIndex(c=>c.id===activeControllerId);
+    controllers.splice(idx, 1);
+    activeControllerId = controllers[0].id;
+    renderControllerSelect();
+    commit(()=>{});
+  });
+
   /* ============================ INIT ============================ */
   resizeCanvas();
+  renderControllerSelect();
   renderRunsList();
   renderInspector();
   updateCanvasHint();

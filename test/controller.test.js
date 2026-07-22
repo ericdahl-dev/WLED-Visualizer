@@ -180,3 +180,31 @@ test('a modern project is preserved, unowned runs adopted by the first controlle
   assert.strictEqual(out.runs[0].controllerId, 'b');
   assert.strictEqual(out.runs[1].controllerId, 'a');
 });
+
+import { previousEndFor, canDeleteController } from '../html/controller.js';
+
+// Start-index chaining scopes to the owning controller: each controller's
+// strip is its own address space, so a new run continues ITS controller's
+// chain, not whichever run happened to be added last globally.
+test('a new run chains from the last run of the same controller only', () => {
+  const runs = [
+    { controllerId: 'a', startIndex: 0, ledCount: 50 },
+    { controllerId: 'b', startIndex: 0, ledCount: 30 },
+    { controllerId: 'a', startIndex: 50, ledCount: 10 },
+  ];
+
+  assert.strictEqual(previousEndFor(runs, 'a'), 60);
+  assert.strictEqual(previousEndFor(runs, 'b'), 30);
+  assert.strictEqual(previousEndFor(runs, 'new'), 0);
+});
+
+// Maintainer decision on #6: deleting a controller is blocked while it still
+// owns runs — no destructive surprise, no ambiguous orphans.
+test('a controller cannot be deleted while it owns runs, nor the last one', () => {
+  const runs = [{ controllerId: 'a' }];
+
+  assert.strictEqual(canDeleteController(runs, 'a', 2).ok, false);
+  assert.match(canDeleteController(runs, 'a', 2).reason, /run/);
+  assert.strictEqual(canDeleteController(runs, 'b', 2).ok, true);
+  assert.strictEqual(canDeleteController([], 'a', 1).ok, false, 'deleted the only controller');
+});
