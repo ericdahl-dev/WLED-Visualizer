@@ -858,7 +858,7 @@
               : WLED_EFFECTS_REAL.map(fx=>`<option value="wled_${fx.id}" title="${fx.desc.replace(/"/g,'&quot;')}" ${run.effect==='wled_'+fx.id?'selected':''}>${fx.name}</option>`).join('')
           }
         </select>
-        <div class="hint">${liveEffects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} Canvas preview approximates the look.</div>
+        <div class="hint">${liveEffects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} ${isMirrored && livePixelsFresh() ? 'Canvas is painting this run&rsquo;s real LED colours from the device.' : 'Canvas preview approximates the look.'}</div>
       </div>
 
       <div class="field">
@@ -1150,8 +1150,15 @@
     const wasExact = livePixelsFresh();
     liveFrame = frame;
     livePixelsAt = performance.now();
-    // Only touch the badge when the feed starts or resumes, not every frame.
-    if(!wasExact) updateLiveBadge();
+    // Only redraw when the feed starts or resumes, not on every frame. The
+    // inspector needs it too: its effect hint says whether the canvas is
+    // showing real LED colours or an approximation.
+    if(!wasExact){
+      updateLiveBadge();
+      const inspectorBody = document.getElementById('inspectorBody');
+      const focusedInsideInspector = inspectorBody && inspectorBody.contains(document.activeElement);
+      if(inspectorTab==='settings' && !focusedInsideInspector) renderInspector();
+    }
   }
 
   function livePixelsFresh(){
