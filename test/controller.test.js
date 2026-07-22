@@ -1,0 +1,143 @@
+import { test } from 'vitest';
+import assert from 'node:assert';
+
+import { createController } from '../html/controller.js';
+
+const DEVICE = {
+  '/json/eff': ['Solid', 'Blink'],
+  '/json/pal': ['Default'],
+  '/json/info': { name: 'WLED-Test', leds: { count: 50 } },
+  '/json/state': { on: true, bri: 128, seg: [{ start: 0, stop: 50, len: 50, fx: 1 }] },
+};
+
+function fakeFetch(routes = DEVICE, fail = []) {
+  const calls = [];
+  const impl = async (url) => {
+    calls.push(url);
+    const path = url.replace(/^http:\/\/[^/]+/, '');
+    if (fail.includes(path)) return { ok: false };
+    if (!(path in routes)) return { ok: false };
+    return { ok: true, json: async () => routes[path] };
+  };
+  return { impl, calls };
+}
+
+// Connect gathers everything the app needs in one call — callers stop
+// composing four fetches and mapping segments themselves.
+test('connect resolves the device description in one call', async () => {
+  const { impl, calls } = fakeFetch();
+  const ctl = createController({ fetch: impl });
+
+  const dev = await ctl.connect('10.0.0.5');
+
+  assert.deepStrictEqual(dev.effects, ['Solid', 'Blink']);
+  assert.deepStrictEqual(dev.palettes, ['Default']);
+  assert.strictEqual(dev.info.name, 'WLED-Test');
+  assert.deepStrictEqual(dev.segments, [{ start: 0, len: 50 }]);
+  assert.ok(calls.every((u) => u.startsWith('http://10.0.0.5/')), 'URL building leaked');
+});
+
+// Effects and palettes are what make a connection usable; info and state are
+// enrichment. Their failure degrades, it doesn't abort.
+test('connect fails without effects, degrades without info or state', async () => {
+  const bad = createController({ fetch: fakeFetch(DEVICE, ['/json/eff']).impl });
+  await assert.rejects(() => bad.connect('10.0.0.5'));
+
+  const degraded = createController({ fetch: fakeFetch(DEVICE, ['/json/info', '/json/state']).impl });
+  const dev = await degraded.connect('10.0.0.5');
+  assert.strictEqual(dev.info, null);
+  assert.deepStrictEqual(dev.segments, []);
+});
+
+function fakeWS() {
+  const instances = [];
+  function FakeWebSocket(url) {
+    this.url = url;
+    this.sent = [];
+    this.readyState = 1;
+    this.send = (m) => this.sent.push(m);
+    this.close = () => { this.readyState = 3; if (this.onclose) this.onclose(); };
+    instances.push(this);
+  }
+  return { FakeWebSocket, instances };
+}
+
+function manualTimers() {
+  const timers = [];
+  return {
+    setInterval: (fn, ms) => { timers.push(fn); return timers.length; },
+    clearInterval: (id) => { timers[id - 1] = null; },
+    tick: () => timers.filter(Boolean).forEach((fn) => fn()),
+    active: () => timers.filter(Boolean).length,
+  };
+}
+
+// The live feed asks the device to stream ({"lv":true}) and hands frames and
+// state updates back; the caller never touches the socket.
+test('the live feed opens the socket, asks for the stream, and routes messages', async () => {
+  const { impl } = fakeFetch();
+  const { FakeWebSocket, instances } = fakeWS();
+  const ctl = createController({ fetch: impl, WebSocket: FakeWebSocket });
+  await ctl.connect('10.0.0.5');
+
+  const frames = [], states = [];
+  ctl.openLiveFeed({ onFrame: (b) => frames.push(b), onState: (s) => states.push(s) });
+  const ws = instances[0];
+  ws.onopen();
+  await new Promise((r) => setTimeout(r, 0));
+
+  assert.ok(ws.url.endsWith('/ws'), 'wrong socket url');
+  assert.deepStrictEqual(ws.sent, ['{"lv":true}']);
+  assert.strictEqual(states.length, 1, 'no initial state push');
+
+  const buf = new ArrayBuffer(8);
+  ws.onmessage({ data: buf });
+  ws.onmessage({ data: JSON.stringify({ state: { on: true, bri: 9, seg: [] } }) });
+
+  assert.deepStrictEqual(frames, [buf]);
+  assert.strictEqual(states[1].bri, 9);
+});
+
+// Older firmware has no live view: the socket dies and the feed keeps working
+// by polling state instead, and reports when even that is gone.
+test('falls back to polling when the socket closes, reports a lost device', async () => {
+  const routes = { ...DEVICE };
+  const { impl } = fakeFetch(routes);
+  const { FakeWebSocket, instances } = fakeWS();
+  const t = manualTimers();
+  const ctl = createController({ fetch: impl, WebSocket: FakeWebSocket, setInterval: t.setInterval, clearInterval: t.clearInterval });
+  await ctl.connect('10.0.0.5');
+
+  const states = []; let lost = 0;
+  ctl.openLiveFeed({ onState: (s) => states.push(s), onLost: () => lost++ });
+  instances[0].close();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(t.active() > 0, 'no polling started');
+
+  t.tick();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.ok(states.length >= 1, 'polling produced no state');
+
+  delete routes['/json/state'];
+  t.tick();
+  await new Promise((r) => setTimeout(r, 0));
+  assert.strictEqual(lost, 1, 'device loss not reported');
+});
+
+// Stopping tells the device to stop streaming and kills socket and polling.
+test('closing the feed sends the stop handshake and stops everything', async () => {
+  const { impl } = fakeFetch();
+  const { FakeWebSocket, instances } = fakeWS();
+  const t = manualTimers();
+  const ctl = createController({ fetch: impl, WebSocket: FakeWebSocket, setInterval: t.setInterval, clearInterval: t.clearInterval });
+  await ctl.connect('10.0.0.5');
+  ctl.openLiveFeed({});
+  const ws = instances[0];
+  ws.onopen();
+
+  ctl.closeLiveFeed();
+
+  assert.ok(ws.sent.includes('{"lv":false}'), 'no stop handshake');
+  assert.strictEqual(ws.readyState, 3, 'socket left open');
+  assert.strictEqual(t.active(), 0, 'polling left running');
+});
