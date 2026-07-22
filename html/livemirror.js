@@ -88,6 +88,25 @@ function newRunGeometry(opts) {
   };
 }
 
+// Build the runs a project is missing, one per device segment it has no run
+// for. Additive on purpose: existing runs carry paths the user drew, which the
+// controller knows nothing about and importing must not discard.
+function importRuns(state, runs, deps) {
+  const segs = Array.isArray(state.seg) ? state.seg : [];
+  let imported = 0;
+  for (let i = runs.length; i < segs.length; i++) {
+    const run = deps.createRun();
+    run.startIndex = segs[i].start;
+    run.ledCount = segs[i].len;
+    runs.push(run);
+    imported++;
+  }
+  // Effect, palette, colours and segment options come from the same mapping
+  // Live Mirror uses, so an imported run looks like what the device is showing.
+  applyDeviceState(state, runs, deps.helpers);
+  return { imported };
+}
+
 // How a run's geometry differs from the segment it mirrors, or null when they
 // agree. Deliberately reported rather than applied: ledCount is layout the
 // user drew and it feeds the exported segment bounds, so adopting it is their
@@ -125,6 +144,7 @@ if (typeof module !== 'undefined' && module.exports) {
     renderLiveBadge,
     newRunGeometry,
     geometryMismatch,
+    importRuns,
     LIVE_PIXEL_STALE_MS,
   };
 }
