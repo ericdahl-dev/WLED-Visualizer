@@ -2,6 +2,7 @@ import { test } from 'vitest';
 import assert from 'node:assert';
 
 import { importRuns } from '../html/livemirror.js';
+import { rgbArrToHex } from '../html/color.js';
 
 // The app owns run creation — ids, names, colour cycling — so it hands over a
 // factory, the same way it hands over effect and colour helpers.
@@ -11,7 +12,7 @@ function deps() {
     createRun: () => ({ id: 'run-' + (n++), points: [] }),
     helpers: {
       effectValue: (fx) => ({ effect: 'wled_' + fx, effectLabel: 'Effect ' + fx, simKey: 'chase' }),
-      rgbToHex: ([r, g, b]) => '#' + [r, g, b].map((v) => v.toString(16).padStart(2, '0')).join(''),
+      rgbToHex: rgbArrToHex,
     },
   };
 }
