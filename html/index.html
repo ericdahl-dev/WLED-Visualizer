@@ -118,6 +118,18 @@
   let livePollTimer = null;
   let liveOn = true;          // device's global on/off state, while mirroring
   let liveMirroredCount = 0;  // how many runs (from index 0) are currently mirrored
+  let liveSegCount = 0;       // segments the device last reported, for the badge
+
+  // Pixel-exact mirroring: WLED's websocket "live view" (the same feed its own
+  // Peek uses) pushes the real post-brightness LED buffer as binary frames —
+  // 'L', format byte, then one RGB(W) triplet per LED. When those frames are
+  // arriving we paint them straight onto the runs instead of re-simulating the
+  // effect locally, so audio-reactive and custom effects look exactly right.
+  let livePixels = null;      // Uint8Array: the most recent frame's colour bytes
+  let livePixelCount = 0;     // LEDs carried by that frame (device may downsample)
+  let livePixelStride = 3;    // 3 = RGB, 4 = RGBW
+  let livePixelsAt = 0;       // performance.now() of the last frame, for staleness
+  const LIVE_PIXEL_STALE_MS = 1500; // no frames for this long → fall back to the sim
 
   const canvas = document.getElementById('stage');
   const ctx = canvas.getContext('2d');
@@ -397,7 +409,7 @@
 
     const masterB = (masterBrightness/255) * (liveMirror && !liveOn ? 0 : 1);
 
-    runs.forEach(run=>{
+    runs.forEach((run, runIdx)=>{
       if(!run.visible) return;
       const isSelected = run.id===selectedRunId;
       const pts = run.points;
@@ -421,8 +433,13 @@
         // true physical distance regardless of canvas aspect ratio.
         const ptsPixel = pts.map(fracToPixel);
         const ledPts = samplePath(ptsPixel, n);
-        const order = run.reverse ? ledPts.slice().reverse() : ledPts;
-        const opacity = (run.opacity===undefined?1:run.opacity) * masterB;
+        // Pixel-exact mirroring: the device's live buffer already has effect,
+        // grouping, spacing, reverse, segment and master brightness baked in,
+        // so map its LEDs straight onto the path and skip our own versions of
+        // all of it. Falls back to the simulation when no frames are arriving.
+        const pixelExact = liveMirror && runIdx < liveMirroredCount && livePixelsFresh();
+        const order = (run.reverse && !pixelExact) ? ledPts.slice().reverse() : ledPts;
+        const opacity = pixelExact ? 1 : (run.opacity===undefined?1:run.opacity) * masterB;
 
         // Grouping/spacing: every (grouping+spacing) physical LEDs, the first
         // "grouping" of them share one effect step (lit as a block), and the
@@ -434,7 +451,7 @@
 
         order.forEach((p,i)=>{
           const posInCell = i % cell;
-          const isLit = posInCell < groupSize;
+          const isLit = pixelExact || posInCell < groupSize;
           const groupIndex = Math.floor(i/cell);
           const px = p; // already in pixel space
 
@@ -446,7 +463,9 @@
             return;
           }
 
-          const rgb = effectColor(run, groupIndex, totalGroups, animTime);
+          const rgb = pixelExact
+            ? (livePixelColor(run.startIndex + i) || [0,0,0])
+            : effectColor(run, groupIndex, totalGroups, animTime);
           const core = rgbToCss(rgb, opacity);
           const halo = rgbToCss(rgb, opacity*0.28);
           ctx.beginPath();
@@ -1122,8 +1141,15 @@
       startLivePolling();
       return;
     }
-    liveSocket.onopen = ()=>{ fetchLiveState(); };
+    liveSocket.binaryType = 'arraybuffer';
+    liveSocket.onopen = ()=>{
+      fetchLiveState();
+      // Ask for the live LED feed. Devices that don't support it simply never
+      // send binary frames, and we keep running the local effect simulation.
+      try{ liveSocket.send(JSON.stringify({lv:true})); }catch(err){}
+    };
     liveSocket.onmessage = (ev)=>{
+      if(ev.data instanceof ArrayBuffer){ applyLivePixels(ev.data); return; }
       let data;
       try{ data = JSON.parse(ev.data); }catch(err){ return; }
       const state = (data && data.state) ? data.state : data;
@@ -1138,14 +1164,56 @@
     };
   }
 
+  // WLED live-view frame: byte 0 is 'L' (0x4C), byte 1 the format (1 = RGB,
+  // 2 = RGBW), then one colour per LED. On long strips the device downsamples,
+  // so the frame can carry fewer LEDs than the strip has — livePixelColor()
+  // rescales for that rather than assuming 1:1.
+  function applyLivePixels(buf){
+    const bytes = new Uint8Array(buf);
+    if(bytes.length < 3 || bytes[0] !== 0x4C) return;
+    const stride = bytes[1] === 2 ? 4 : 3;
+    const count = Math.floor((bytes.length - 2) / stride);
+    if(count < 1) return;
+    const wasExact = livePixelsFresh();
+    livePixels = bytes;
+    livePixelStride = stride;
+    livePixelCount = count;
+    livePixelsAt = performance.now();
+    // Only touch the badge when the feed starts or resumes, not every frame.
+    if(!wasExact) updateLiveBadge();
+  }
+
+  function livePixelsFresh(){
+    return !!livePixels && (performance.now() - livePixelsAt) < LIVE_PIXEL_STALE_MS;
+  }
+
+  // Colour of a given controller LED index in the current live frame, or null
+  // when there's no usable frame (caller then falls back to the simulation).
+  function livePixelColor(deviceIdx){
+    if(!livePixelsFresh() || deviceIdx < 0) return null;
+    const stripLen = (deviceInfo && deviceInfo.leds && deviceInfo.leds.count) || livePixelCount;
+    if(deviceIdx >= stripLen) return null;
+    // Map the controller index onto the frame, which may be downsampled.
+    let i = livePixelCount >= stripLen ? deviceIdx : Math.floor(deviceIdx * livePixelCount / stripLen);
+    if(i >= livePixelCount) i = livePixelCount - 1;
+    const o = 2 + i*livePixelStride;
+    return [livePixels[o], livePixels[o+1], livePixels[o+2]];
+  }
+
   function updateLiveBadge(segCount){
     const badge = document.getElementById('liveBadge');
     if(!badge) return;
+    if(segCount!==undefined) liveSegCount = segCount;
     if(liveMirror){
+      const exact = livePixelsFresh();
       badge.style.display = 'inline';
-      badge.title = `Mirroring ${liveMirroredCount} of ${segCount||0} device segment(s) onto ${runs.length} run(s).`;
+      badge.textContent = exact ? '● LIVE · PIXEL' : '● LIVE';
+      badge.title = exact
+        ? `Pixel-exact: painting ${livePixelCount} LED colours straight from the device, ${liveMirroredCount} of ${liveSegCount||0} segment(s) onto ${runs.length} run(s).`
+        : `Mirroring ${liveMirroredCount} of ${liveSegCount||0} device segment(s) onto ${runs.length} run(s). Effects are simulated locally — no live LED feed from this device.`;
     } else {
       badge.style.display = 'none';
+      badge.textContent = '● LIVE';
     }
   }
 
@@ -1167,9 +1235,19 @@
     if(btn) btn.textContent = 'Live Mirror';
     const slider = document.getElementById('masterBrightness');
     if(slider) slider.disabled = false;
-    if(liveSocket){ liveSocket.onclose = null; liveSocket.close(); liveSocket = null; }
+    if(liveSocket){
+      // Tell the device to stop pushing LED frames before dropping the socket.
+      try{ if(liveSocket.readyState===1) liveSocket.send(JSON.stringify({lv:false})); }catch(err){}
+      liveSocket.onclose = null; liveSocket.close(); liveSocket = null;
+    }
+    livePixels = null; livePixelCount = 0; livePixelsAt = 0;
     stopLivePolling();
     updateLiveBadge(0);
+    // Drop the "live-mirrored" banner — otherwise the inspector keeps warning
+    // that the device will overwrite these fields after mirroring has stopped.
+    const inspectorBody = document.getElementById('inspectorBody');
+    const focusedInsideInspector = inspectorBody && inspectorBody.contains(document.activeElement);
+    if(inspectorTab==='settings' && !focusedInsideInspector) renderInspector();
   }
 
   document.getElementById('btnLiveMirror').addEventListener('click', ()=>{
