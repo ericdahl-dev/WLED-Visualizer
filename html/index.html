@@ -229,37 +229,27 @@
 
   // Given a raw <select id="f_effect"> value ('wled_N' or 'live_N'), returns
   // the built-in simulation key to preview it with.
-  function resolveSimKeyFromValue(val){
-    if(val.startsWith('wled_')){
-      const fx = WLED_EFFECTS_BY_ID[parseInt(val.slice(5))];
-      return fx ? fx.sim : 'chase';
-    }
-    if(val.startsWith('live_')){
-      return guessSimEffect(liveEffects ? liveEffects[parseInt(val.slice(5))] : '');
-    }
-    return val;
+  // Thin wrappers over the effect-ref codec in effects.js — the string
+  // convention is parsed there and nowhere else.
+  function effectRefCtx(){
+    return { liveNames: liveEffects, guessSim: guessSimEffect };
   }
-  // Given the same value, returns the human-readable effect name.
+  function resolveSimKeyFromValue(val){
+    return resolveEffectRef(parseEffectValue(val), effectRefCtx()).simKey;
+  }
   function resolveEffectLabel(val){
-    if(val.startsWith('wled_')){
-      const fx = WLED_EFFECTS_BY_ID[parseInt(val.slice(5))];
-      return fx ? fx.name : val;
-    }
-    if(val.startsWith('live_')){
-      return liveEffects ? liveEffects[parseInt(val.slice(5))] : val;
-    }
-    return val;
+    return resolveEffectRef(parseEffectValue(val), effectRefCtx()).label;
   }
   // Resolves an imported run's effect (exported as a name + wledEffectId) back
   // into our internal representation, preferring the id match.
   function resolveImportedEffect(r){
     if(typeof r.wledEffectId==='number'){
       const fx = WLED_EFFECTS_BY_ID[r.wledEffectId];
-      if(fx) return {effect:'wled_'+fx.id, effectLabel:fx.name, simKey:fx.sim};
+      if(fx) return {effect:formatEffectValue({kind:'wled', id:fx.id}), effectLabel:fx.name, simKey:fx.sim};
     }
     if(r.effect){
       const byName = WLED_EFFECTS_REAL.find(e=>e.name.toLowerCase()===String(r.effect).toLowerCase());
-      if(byName) return {effect:'wled_'+byName.id, effectLabel:byName.name, simKey:byName.sim};
+      if(byName) return {effect:formatEffectValue({kind:'wled', id:byName.id}), effectLabel:byName.name, simKey:byName.sim};
     }
     if(EFFECT_MAP[r.effect]) return {effect:r.effect, effectLabel:null, simKey:r.effect};
     return {effect:'wled_28', effectLabel:r.effect||'Chase', simKey:guessSimEffect(r.effect)};
@@ -1080,8 +1070,9 @@
   function deviceStateHelpers(){
     return {
       effectValue: (fx)=>{
-        const val = liveEffects ? 'live_'+fx : 'wled_'+fx;
-        return { effect: val, effectLabel: resolveEffectLabel(val), simKey: resolveSimKeyFromValue(val) };
+        const ref = { kind: liveEffects ? 'live' : 'wled', id: fx };
+        const r = resolveEffectRef(ref, effectRefCtx());
+        return { effect: r.value, effectLabel: r.label, simKey: r.simKey };
       },
       rgbToHex: rgbArrToHex,
     };
@@ -1270,8 +1261,8 @@
 
   /* ============================ EXPORT / IMPORT ============================ */
   function resolveWledFxId(run){
-    if(run.effect.startsWith('wled_')) return parseInt(run.effect.slice(5));
-    if(run.effect.startsWith('live_')) return parseInt(run.effect.slice(5));
+    const ref = resolveEffectRef(parseEffectValue(run.effect), effectRefCtx());
+    if(ref.wledId !== null) return ref.wledId;
     return WLED_FX_ID[run.effect] !== undefined ? WLED_FX_ID[run.effect] : null;
   }
 

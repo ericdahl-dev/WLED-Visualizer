@@ -394,6 +394,50 @@ function mirroredGroup(groupIndex, totalGroups) {
   return { index, count };
 }
 
+/* Effect references. One codec owns the 'wled_N' / 'live_N' string
+   convention; everything else holds {kind, id|key}. The live→wled id mapping
+   is the WLED JSON API contract: the /json/eff array index IS the effect id
+   (gaps stay aligned via RSVD entries) — verified on hardware, not assumed. */
+
+function parseEffectValue(val) {
+  if (typeof val === 'string') {
+    if (val.startsWith('wled_')) return { kind: 'wled', id: parseInt(val.slice(5)) };
+    if (val.startsWith('live_')) return { kind: 'live', id: parseInt(val.slice(5)) };
+  }
+  return { kind: 'sim', key: String(val) };
+}
+
+function formatEffectValue(ref) {
+  if (ref.kind === 'wled') return 'wled_' + ref.id;
+  if (ref.kind === 'live') return 'live_' + ref.id;
+  return ref.key;
+}
+
+// ctx carries what only the app knows: the connected device's effect names
+// and its name→sim guesser. Both optional — offline resolution needs neither.
+function resolveEffectRef(ref, ctx) {
+  const value = formatEffectValue(ref);
+  if (ref.kind === 'wled') {
+    const fx = WLED_EFFECTS_BY_ID[ref.id];
+    return {
+      value,
+      label: fx ? fx.name : value,
+      simKey: fx ? fx.sim : 'chase',
+      wledId: ref.id,
+    };
+  }
+  if (ref.kind === 'live') {
+    const label = (ctx && ctx.liveNames && ctx.liveNames[ref.id] !== undefined) ? ctx.liveNames[ref.id] : value;
+    return {
+      value,
+      label,
+      simKey: (ctx && ctx.guessSim) ? ctx.guessSim(label) : 'chase',
+      wledId: ref.id,
+    };
+  }
+  return { value, label: value, simKey: ref.key, wledId: null };
+}
+
 function computeEffectColor(run, i, n, t, helpers) {
   const key = run.simKey || run.effect;
   const renderer = EFFECT_RENDERERS[key] || EFFECT_RENDERERS.chase;
@@ -410,6 +454,9 @@ if (typeof module !== 'undefined' && module.exports) {
     WLED_EFFECTS_BY_ID,
     computeEffectColor,
     mirroredGroup,
+    parseEffectValue,
+    formatEffectValue,
+    resolveEffectRef,
     createEffectContext,
   };
 }
