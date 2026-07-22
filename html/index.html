@@ -29,6 +29,7 @@
       <input type="text" id="controllerIp" placeholder="Controller IP" style="width:130px;background:var(--surface-raised);border:1px solid var(--border);color:var(--text-primary);padding:8px 9px;border-radius:8px;font-family:var(--font-mono);font-size:12px;">
       <button class="hbtn" id="btnConnect">Connect</button>
       <span id="connStatus" style="font-size:11px;color:var(--text-faint);font-family:var(--font-mono);white-space:nowrap;max-width:170px;overflow:hidden;text-overflow:ellipsis;">not connected</span>
+      <button class="hbtn" id="btnImportDevice" disabled title="Create a run for each segment this device is driving, with its effect, palette and colors already set. Existing runs are left alone — you draw the paths afterwards.">Import Runs</button>
       <button class="hbtn" id="btnLiveMirror" disabled title="Mirror this device's live effect, palette, colors, speed/intensity and segment state onto the canvas in real time — a richer version of WLED's native Peek.">Live Mirror</button>
       <span id="liveBadge" style="font-size:11px;color:var(--accent);font-family:var(--font-mono);white-space:nowrap;display:none;">&#9679; LIVE</span>
     </div>
@@ -1071,6 +1072,7 @@
     if(!ip){ setConnStatus('enter an ip first','error'); return; }
     stopLiveMirror();
     document.getElementById('btnLiveMirror').disabled = true;
+    document.getElementById('btnImportDevice').disabled = true;
     controllerIp = ip;
     setConnStatus('connecting…','connecting');
     try{
@@ -1097,6 +1099,7 @@
       const label = (deviceInfo && deviceInfo.name) ? `${deviceInfo.name} · ${liveEffects.length} fx` : `connected · ${liveEffects.length} fx`;
       setConnStatus(label, 'connected');
       document.getElementById('btnLiveMirror').disabled = false;
+      document.getElementById('btnImportDevice').disabled = false;
       renderInspector();
     }catch(err){
       liveEffects = null; livePalettes = null;
@@ -1105,12 +1108,56 @@
     }
   }
   document.getElementById('btnConnect').addEventListener('click', connectController);
+  document.getElementById('btnImportDevice').addEventListener('click', importRunsFromDevice);
 
   /* ============================ LIVE MIRROR ("PEEK") ============================ */
   // Applies a WLED /json/state-shaped object (top-level bri/on + seg[]) onto
   // our runs, matched to device segments by array order. Colors/effect/speed
   // etc. are read straight off the run object every animation frame, so the
   // canvas reflects this immediately — no re-render needed for the visuals.
+  // Effect ids and colour formats are the app's business, not livemirror.js's,
+  // so they're handed over rather than reached for.
+  function deviceStateHelpers(){
+    return {
+      effectValue: (fx)=>{
+        const val = liveEffects ? 'live_'+fx : 'wled_'+fx;
+        return { effect: val, effectLabel: resolveEffectLabel(val), simKey: resolveSimKeyFromValue(val) };
+      },
+      rgbToHex: rgbArrToHex,
+    };
+  }
+
+  // Build a run for each segment the project has no run for, with the device's
+  // effect, palette and colours already set. Additive: runs already drawn keep
+  // their paths, which the controller knows nothing about.
+  async function importRunsFromDevice(){
+    if(!controllerIp) return;
+    let state;
+    try{
+      const res = await fetch('http://'+controllerIp+'/json/state');
+      if(!res.ok) throw new Error('bad state response');
+      state = await res.json();
+    }catch(err){
+      setConnStatus('import failed — device unreachable', 'error');
+      return;
+    }
+    deviceSegments = Array.isArray(state.seg)
+      ? state.seg.map(s=>({start: s.start, len: s.len}))
+      : [];
+    const result = importRuns(state, runs, {
+      createRun: defaultRun,
+      helpers: deviceStateHelpers(),
+    });
+    if(!result.imported){
+      setConnStatus('nothing to import — every segment already has a run', 'error');
+      return;
+    }
+    selectedRunId = runs[runs.length-1].id;
+    renderRunsList();
+    renderInspector();
+    setConnStatus(`imported ${result.imported} run(s) — draw their paths`, 'connected');
+  }
+
   function applyLiveState(state){
     if(!state) return;
     if(typeof state.on === 'boolean') liveOn = state.on;
@@ -1119,13 +1166,7 @@
       const slider = document.getElementById('masterBrightness');
       if(slider) slider.value = masterBrightness;
     }
-    const result = applyDeviceState(state, runs, {
-      effectValue: (fx)=>{
-        const val = liveEffects ? 'live_'+fx : 'wled_'+fx;
-        return { effect: val, effectLabel: resolveEffectLabel(val), simKey: resolveSimKeyFromValue(val) };
-      },
-      rgbToHex: rgbArrToHex,
-    });
+    const result = applyDeviceState(state, runs, deviceStateHelpers());
     liveMirroredCount = result.mirroredCount;
     renderRunsList();
     updateLiveBadge(result.segCount);
