@@ -9,21 +9,21 @@ import {
 } from '../html/livemirror.js';
 import { rgbArrToHex } from '../html/color.js';
 
-// Build a WLED live-view frame: 'L', format byte, then one colour per LED.
-function frameOf(colours, format = 1) {
+// Build a WLED live-view frame: 'L', format byte, then one color per LED.
+function frameOf(colors, format = 1) {
   const stride = format === 2 ? 4 : 3;
-  const bytes = new Uint8Array(2 + colours.length * stride);
+  const bytes = new Uint8Array(2 + colors.length * stride);
   bytes[0] = 0x4C;
   bytes[1] = format;
-  colours.forEach((c, i) => {
+  colors.forEach((c, i) => {
     const o = 2 + i * stride;
     bytes[o] = c[0]; bytes[o + 1] = c[1]; bytes[o + 2] = c[2];
     if (stride === 4) bytes[o + 3] = c[3] || 0;
   });
-  return { bytes, count: colours.length, stride };
+  return { bytes, count: colors.length, stride };
 }
 
-test('reads the colour of an LED from a frame covering the whole strip', () => {
+test('reads the color of an LED from a frame covering the whole strip', () => {
   const frame = frameOf([[255, 0, 0], [0, 255, 0], [0, 0, 255]]);
 
   assert.deepStrictEqual(liveFrameColor(frame, 0, 3), [255, 0, 0]);
@@ -32,7 +32,7 @@ test('reads the colour of an LED from a frame covering the whole strip', () => {
 });
 
 // Long strips exceed WLED's live-view payload budget, so the device sends a
-// downsampled frame and every LED has to find its colour by proportion.
+// downsampled frame and every LED has to find its color by proportion.
 test('spreads a downsampled frame across the full strip', () => {
   const frame = frameOf([[255, 0, 0], [0, 255, 0], [0, 0, 255]]);
 
@@ -45,8 +45,8 @@ test('spreads a downsampled frame across the full strip', () => {
 });
 
 // A run can be configured to run off the end of the strip, or start before it.
-// Those LEDs have no colour to report rather than a wrong one.
-test('reports no colour for LEDs outside the strip', () => {
+// Those LEDs have no color to report rather than a wrong one.
+test('reports no color for LEDs outside the strip', () => {
   const frame = frameOf([[255, 0, 0], [0, 255, 0], [0, 0, 255]]);
 
   assert.strictEqual(liveFrameColor(frame, 3, 3), null);
@@ -54,7 +54,7 @@ test('reports no colour for LEDs outside the strip', () => {
   assert.strictEqual(liveFrameColor(frame, -1, 3), null);
 });
 
-test('parses an RGB frame into its LED colours', () => {
+test('parses an RGB frame into its LED colors', () => {
   const raw = frameOf([[255, 0, 0], [0, 255, 0]]).bytes;
 
   const frame = parseLiveFrame(raw.buffer);
@@ -65,7 +65,7 @@ test('parses an RGB frame into its LED colours', () => {
 });
 
 // RGBW strips send a fourth byte per LED. The white channel isn't drawn, but
-// it shifts where every subsequent colour starts.
+// it shifts where every subsequent color starts.
 test('parses an RGBW frame using a four byte stride', () => {
   const raw = frameOf([[255, 0, 0, 10], [0, 255, 0, 20]], 2).bytes;
 
@@ -77,7 +77,7 @@ test('parses an RGBW frame using a four byte stride', () => {
 });
 
 // The socket carries whatever the device decides to send. Anything that isn't
-// a live-view frame is refused rather than drawn as garbage colours.
+// a live-view frame is refused rather than drawn as garbage colors.
 test('refuses frames that are not live-view data', () => {
   const notLiveView = new Uint8Array([0x4A, 1, 255, 0, 0]);   // wrong magic byte
   const truncated = new Uint8Array([0x4C, 1]);                 // header, no LEDs
@@ -103,7 +103,7 @@ test('has no fresh frame before the first one arrives', () => {
   assert.strictEqual(isFrameFresh(null, 1000), false);
 });
 
-// The app resolves effect ids and colour formats itself, so those are injected
+// The app resolves effect ids and color formats itself, so those are injected
 // the same way effects.js takes its helpers.
 function helpers() {
   return {

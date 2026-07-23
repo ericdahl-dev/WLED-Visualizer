@@ -40,7 +40,7 @@ test('a committed mutation redraws the list, the inspector and the badge', () =>
 });
 
 // Rebuilding the inspector mid-edit destroys what the user is doing: partial
-// text, a colour picker mid-drag, a slider mid-throw. Those fields hold state.
+// text, a color picker mid-drag, a slider mid-throw. Those fields hold state.
 test('keeps the inspector intact while a stateful field is being edited', () => {
   for (const type of ['text', 'number', 'color', 'range']) {
     const { commit, calls, body } = harness();

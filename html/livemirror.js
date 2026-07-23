@@ -1,6 +1,6 @@
 /* Live Mirror: turning a WLED device's live output into something the canvas
    can draw. Kept free of DOM and socket concerns so the protocol logic can be
-   exercised on its own, the same way effects.js keeps colour maths separate. */
+   exercised on its own, the same way effects.js keeps color maths separate. */
 
 // How long a frame stays usable. Long enough to ride out a dropped frame on a
 // busy network, short enough that a dead feed doesn't leave the canvas frozen.
@@ -12,7 +12,7 @@ function isFrameFresh(arrivedAt, now) {
   return (now - arrivedAt) < LIVE_PIXEL_STALE_MS;
 }
 
-// A WLED live-view frame: 'L', a format byte, then one colour per LED.
+// A WLED live-view frame: 'L', a format byte, then one color per LED.
 function parseLiveFrame(buf) {
   const bytes = new Uint8Array(buf);
   if (bytes.length < 3 || bytes[0] !== 0x4C) return null;
@@ -22,7 +22,7 @@ function parseLiveFrame(buf) {
   return { bytes, count, stride };
 }
 
-// Colour of a controller LED index within a live frame. The frame may carry
+// Color of a controller LED index within a live frame. The frame may carry
 // fewer LEDs than the strip has, since WLED downsamples long strips to keep
 // the payload small, so indices are mapped by proportion rather than 1:1.
 function liveFrameColor(frame, deviceIdx, stripLen) {
@@ -34,7 +34,7 @@ function liveFrameColor(frame, deviceIdx, stripLen) {
 }
 
 // Mirror a device's /json/state onto the runs, pairing them with segments by
-// order. Effect ids and colour formatting come from the caller, so this stays
+// order. Effect ids and color formatting come from the caller, so this stays
 // independent of the app's effect tables.
 function applyDeviceState(state, runs, helpers) {
   const segs = Array.isArray(state.seg) ? state.seg : [];
@@ -101,7 +101,7 @@ function importRuns(state, runs, deps) {
     runs.push(run);
     imported++;
   }
-  // Effect, palette, colours and segment options come from the same mapping
+  // Effect, palette, colors and segment options come from the same mapping
   // Live Mirror uses, so an imported run looks like what the device is showing.
   applyDeviceState(state, runs, deps.helpers);
   return { imported };
@@ -154,7 +154,7 @@ function renderLiveBadge(el, status) {
   el.style.display = 'inline';
   el.textContent = status.pixelExact ? '● LIVE · PIXEL' : '● LIVE';
   el.title = status.pixelExact
-    ? `Pixel-exact: painting ${status.pixelCount} LED colours straight from the device, `
+    ? `Pixel-exact: painting ${status.pixelCount} LED colors straight from the device, `
       + `${status.mirroredCount} of ${status.segCount || 0} segment(s) onto ${status.runCount} run(s).`
     : `Mirroring ${status.mirroredCount} of ${status.segCount || 0} device segment(s) onto `
       + `${status.runCount} run(s). Effects are simulated locally — no live LED feed from this device.`;

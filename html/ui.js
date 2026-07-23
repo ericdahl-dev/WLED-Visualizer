@@ -4,7 +4,7 @@
    separate bugs shipped from call sites hand-picking their own re-renders. */
 
 // Fields that hold in-progress state a rebuild would destroy: partial text,
-// a colour picker mid-drag, a slider mid-throw. Selects, checkboxes and
+// a color picker mid-drag, a slider mid-throw. Selects, checkboxes and
 // buttons are atomic — once their change fires there is nothing to lose,
 // and effect changes need the rebuild to swap parameter fields.
 const EDIT_IN_PROGRESS_TYPES = ['text', 'number', 'color', 'range'];
