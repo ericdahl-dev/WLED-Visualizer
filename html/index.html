@@ -157,7 +157,7 @@
   /* ============================ UTIL ============================ */
   function uid(){ runCounter++; return 'run_' + runCounter + '_' + Math.floor(Math.random()*1000); }
 
-  // Colour/math helpers (hexToRgb, rgbArrToHex, rgbToCss, lerp, lerpRgb,
+  // Color/math helpers (hexToRgb, rgbArrToHex, rgbToCss, lerp, lerpRgb,
   // clamp, hash01, hsl2rgb, sampleGradientStops) live in color.js, shared
   // with the test suites.
   function download(filename, text){
@@ -855,7 +855,7 @@
               : WLED_EFFECTS_REAL.map(fx=>`<option value="wled_${fx.id}" title="${fx.desc.replace(/"/g,'&quot;')}" ${run.effect==='wled_'+fx.id?'selected':''}>${fx.name}</option>`).join('')
           }
         </select>
-        <div class="hint">${activeController().effects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} ${isMirrored && livePixelsFresh() ? 'Canvas is painting this run&rsquo;s real LED colours from the device.' : 'Canvas preview approximates the look.'}</div>
+        <div class="hint">${activeController().effects ? 'Exact ids from your device.' : "Real WLED names &amp; ids (core set, 0–117)."} ${isMirrored && livePixelsFresh() ? 'Canvas is painting this run&rsquo;s real LED colors from the device.' : 'Canvas preview approximates the look.'}</div>
       </div>
 
       <div class="field">
@@ -1099,7 +1099,7 @@
   // our runs, matched to device segments by array order. Colors/effect/speed
   // etc. are read straight off the run object every animation frame, so the
   // canvas reflects this immediately — no re-render needed for the visuals.
-  // Effect ids and colour formats are the app's business, not livemirror.js's,
+  // Effect ids and color formats are the app's business, not livemirror.js's,
   // so they're handed over rather than reached for.
   function deviceStateHelpers(){
     return {
@@ -1113,7 +1113,7 @@
   }
 
   // Build a run for each segment the project has no run for, with the device's
-  // effect, palette and colours already set. Additive: runs already drawn keep
+  // effect, palette and colors already set. Additive: runs already drawn keep
   // their paths, which the controller knows nothing about.
   async function importRunsFromDevice(){
     if(!activeController().ip) return;
@@ -1160,7 +1160,7 @@
     livePixelsAt = performance.now();
     // Only redraw when the feed starts or resumes, not on every frame. The
     // inspector needs it too: its effect hint says whether the canvas is
-    // showing real LED colours or an approximation.
+    // showing real LED colors or an approximation.
     if(!wasExact) commit(()=>{}, {background: true});
   }
 
@@ -1168,7 +1168,7 @@
     return !!liveFrame && isFrameFresh(livePixelsAt, performance.now());
   }
 
-  // Colour of a given controller LED index in the current live frame, or null
+  // Color of a given controller LED index in the current live frame, or null
   // when there's no usable frame (caller then falls back to the simulation).
   function livePixelColor(deviceIdx){
     if(!livePixelsFresh()) return null;

@@ -4,8 +4,8 @@ import assert from 'node:assert';
 import { importRuns } from '../html/livemirror.js';
 import { rgbArrToHex } from '../html/color.js';
 
-// The app owns run creation — ids, names, colour cycling — so it hands over a
-// factory, the same way it hands over effect and colour helpers.
+// The app owns run creation — ids, names, color cycling — so it hands over a
+// factory, the same way it hands over effect and color helpers.
 function deps() {
   let n = 0;
   return {
@@ -45,7 +45,7 @@ test('each imported run takes its bounds from its segment', () => {
 
 // An imported run should look like what the controller is already showing,
 // otherwise you've only imported half the configuration.
-test('imported runs carry the device effect, palette and colours', () => {
+test('imported runs carry the device effect, palette and colors', () => {
   const runs = [];
   const state = {
     on: true,

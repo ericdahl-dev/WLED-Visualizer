@@ -4,7 +4,7 @@ import assert from 'node:assert';
 import { EFFECT_RENDERERS, computeEffectColor, mirroredGroup } from '../html/effects.js';
 
 // The real helpers the app ships — not copies. getPaletteStops stays a stub
-// because it reads app palette state; these tests use content colours.
+// because it reads app palette state; these tests use content colors.
 import { clamp, lerpRgb, hexToRgb, hsl2rgb, hash01 } from '../html/color.js';
 
 const helpers = {
@@ -214,16 +214,16 @@ test('android is one block whose size breathes over time', () => {
   assert.strictEqual(clusters(strip('android', 60, 3), 60), 1, 'not contiguous');
 });
 
-// FX.cpp chase(): Chase Random picks a new wheel colour each lap — the
+// FX.cpp chase(): Chase Random picks a new wheel color each lap — the
 // background hue changes, the marching bands stay.
-test('chase random changes its background colour between laps', () => {
+test('chase random changes its background color between laps', () => {
   assert.ok(EFFECT_RENDERERS.chaseRandom, 'no chaseRandom renderer');
 
   const bgAt = (t) => {
     const leds = strip('chaseRandom', 60, t);
     const counts = {};
     for (const c of leds) { const k = c.map(Math.round).join(','); counts[k] = (counts[k] || 0) + 1; }
-    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; // dominant colour
+    return Object.entries(counts).sort((a, b) => b[1] - a[1])[0][0]; // dominant color
   };
 
   assert.notStrictEqual(bgAt(1), bgAt(40), 'background never changes');
